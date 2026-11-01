@@ -796,7 +796,6 @@ async function uploadBoardPng() {
 
 // Botão "Arquivo", arrastar-e-soltar e colar
 const fileInput = document.getElementById('fileInput');
-document.getElementById('fileBtn').addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => { uploadFiles(fileInput.files); fileInput.value = ''; });
 window.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
 window.addEventListener('drop', e => {
