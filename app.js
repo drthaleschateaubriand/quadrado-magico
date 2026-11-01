@@ -425,7 +425,7 @@ $('zoomOut').onclick = () => zoomAt(innerWidth / 2, innerHeight / 2, 1 / 1.2);
 $('zoomReset').onclick = () => { view = { x: 0, y: 0, zoom: 1 }; render(); scheduleSave(false); };
 
 window.addEventListener('keydown', e => {
-  if (editing || e.target.tagName === 'INPUT' || dialogOpen() || trashOpen() || QMViewer.isOpen && QMViewer.isOpen() || e.target.closest && e.target.closest('.qm-card,#viewer')) return;
+  if (editing || e.target.tagName === 'INPUT' || dialogOpen() || trashOpen() || window.QMGraph && QMGraph.isOpen() || QMViewer.isOpen && QMViewer.isOpen() || e.target.closest && e.target.closest('.qm-card,#viewer')) return;
   const mod = e.metaKey || e.ctrlKey;
   if (e.code === 'Space') { spaceDown = true; canvas.style.cursor = 'grab'; e.preventDefault(); return; }
   if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
@@ -1257,6 +1257,42 @@ $('trashBtn').onclick = openTrash; $('trashClose').onclick = closeTrash; $('empt
 $('trashView').addEventListener('pointerdown', e => { if (e.target.id === 'trashView') closeTrash(); });
 window.addEventListener('keydown', e => { if (e.key === 'Escape' && trashOpen() && !dialogOpen()) closeTrash(); });
 
+
+// ---- Visualização em gráfico ----
+function graphData() {
+  const folders = tabsState.tabs.map(t => {
+    const b = t.id === tabsState.activeId ? serialize() : (readBoardLocal(t.id) || emptyBoard());
+    const items = [];
+    for (const e of b.elements || []) {
+      if (e.type === 'file') items.push({ id: e.id, kind: 'file', label: e.name || 'arquivo' });
+      else if (e.type === 'text' && e.text && e.text.trim()) items.push({ id: e.id, kind: 'text', label: e.text.trim().split('\n')[0].slice(0, 60) });
+    }
+    return { id: t.id, name: t.name, items, texts: (b.elements || []).filter(e => e.type === 'text').map(e => e.text || '').join('\n').toLowerCase() };
+  });
+  const folderLinks = [];
+  for (const a of folders) for (const b of folders) if (a !== b && b.name.trim().length >= 3 && a.texts.includes(b.name.trim().toLowerCase())) folderLinks.push([a.id, b.id]);
+  return { folders, folderLinks };
+}
+async function graphRefresh() {
+  if (!connected()) return null;
+  const missing = tabsState.tabs.filter(t => t.id !== tabsState.activeId && !readBoardLocal(t.id) && t.folderId);
+  if (!missing.length) return null;
+  await Promise.all(missing.map(t => enqueue(() => loadTabFromDrive(t)).catch(e => console.warn(e))));
+  return graphData();
+}
+function centerOn(el) {
+  const b = bounds(el); view.x = innerWidth / 2 - (b.x1 + b.x2) / 2 * view.zoom; view.y = innerHeight / 2 - (b.y1 + b.y2) / 2 * view.zoom;
+}
+function graphOpenItem(tabId, elId, kind) {
+  if (tabId !== tabsState.activeId) switchTab(tabId);
+  if (tabId !== tabsState.activeId) return;
+  const el = elements.find(e => e.id === elId); if (!el) return;
+  setTool('select'); selectedId = el.id; multiSel = []; centerOn(el); render(); updateOpenBtn();
+  if (kind === 'file') openFileEl(el);
+}
+QMGraph.init({ getData: graphData, refresh: graphRefresh, openTab: id => switchTab(id), openItem: graphOpenItem });
+$('graphBtn').onclick = () => { commitText(); saveLocal(); QMGraph.open(); };
+
 loadTabsLocal(); renderTabs(); updateTrashBadge();
 try { loadState(readBoardLocal(tabsState.activeId) || emptyBoard()); } catch (e) { console.error(e); }
 QMInline.init({ open: openFileEl, select: el => { if (tool !== 'select') return; commitText(); selectedId = el.id; multiSel = []; render(); }, wheel: onWheel,
@@ -1264,4 +1300,4 @@ QMInline.init({ open: openFileEl, select: el => { if (tool !== 'select') return;
 setTool('select'); resize(); initGis(); autoLogin();
 if (location.protocol === 'file:') setStatus('error', 'Abra via http://localhost:8000');
 // Exposto para testes automatizados
-window.__quadrado = { get tabsState() { return tabsState; }, switchTab, newTab, deleteTab, syncFromDrive, get driveQ() { return driveQ; }, openFileEl, migrateDataUrlTexts, loadState, get elements() { return elements; }, get view() { return view; }, undo, redo, saveNow, setTool, render, QMInline, setToken: (t) => { accessToken = t; tokenExpiry = Date.now() + 3600e3; render(); } };
+window.__quadrado = { graphData, get tabsState() { return tabsState; }, switchTab, newTab, deleteTab, syncFromDrive, get driveQ() { return driveQ; }, openFileEl, migrateDataUrlTexts, loadState, get elements() { return elements; }, get view() { return view; }, undo, redo, saveNow, setTool, render, QMInline, setToken: (t) => { accessToken = t; tokenExpiry = Date.now() + 3600e3; render(); } };
