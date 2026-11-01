@@ -17,6 +17,7 @@ let style = { stroke: '#1e1e1e', fill: '#a5d8ff', fillOn: false, width: 3 };
 let selectedId = null;
 let undoStack = [], redoStack = [];
 let lastTap = {};
+let multiSel = []; // ids extras selecionados (Shift+arrastar)
 let current = null;      // elemento em criação
 let drag = null;         // estado da interação atual
 let spaceDown = false;
@@ -116,13 +117,20 @@ function render() {
     ctx.setTransform(dpr * view.zoom, 0, 0, dpr * view.zoom, dpr * view.x, dpr * view.y);
     for (const el of elements) drawEl(el);
     if (current) drawEl(current);
-    const sel = elements.find(e => e.id === selectedId);
-    if (sel) {
-      const b = bounds(sel), m = 6 / view.zoom;
+    for (const sel of selectedEls()) {
+      const b = bounds(sel), m = 6 / view.zoom, h = 9 / view.zoom;
       ctx.save(); ctx.setLineDash([6 / view.zoom, 4 / view.zoom]); ctx.strokeStyle = '#4dabf7'; ctx.lineWidth = 1.5 / view.zoom;
-      ctx.strokeRect(b.x1 - m, b.y1 - m, b.x2 - b.x1 + 2 * m, b.y2 - b.y1 + 2 * m);
-      if (sel.type === 'file' && sel.isImage) { const h = 10 / view.zoom; ctx.setLineDash([]); ctx.fillStyle = '#fff'; ctx.fillRect(b.x2 - h / 2, b.y2 - h / 2, h, h); ctx.strokeRect(b.x2 - h / 2, b.y2 - h / 2, h, h); }
+      const X1 = b.x1 - m, Y1 = b.y1 - m, X2 = b.x2 + m, Y2 = b.y2 + m;
+      ctx.strokeRect(X1, Y1, X2 - X1, Y2 - Y1);
+      ctx.setLineDash([]); ctx.fillStyle = '#fff';
+      const corners = sel.type === 'file' && sel.isImage ? [[b.x2, b.y2]] : [[X1, Y1], [X2, Y1], [X1, Y2], [X2, Y2]];
+      for (const [cx, cy] of corners) { ctx.fillRect(cx - h / 2, cy - h / 2, h, h); ctx.strokeRect(cx - h / 2, cy - h / 2, h, h); }
       ctx.restore();
+    }
+    if (drag && drag.kind === 'band') {
+      const x = Math.min(drag.a.x, drag.b.x), y = Math.min(drag.a.y, drag.b.y);
+      ctx.save(); ctx.fillStyle = 'rgba(77,171,247,.1)'; ctx.strokeStyle = '#4dabf7'; ctx.lineWidth = 1 / view.zoom;
+      ctx.fillRect(x, y, Math.abs(drag.b.x - drag.a.x), Math.abs(drag.b.y - drag.a.y)); ctx.strokeRect(x, y, Math.abs(drag.b.x - drag.a.x), Math.abs(drag.b.y - drag.a.y)); ctx.restore();
     }
     document.getElementById('zoomLabel').textContent = Math.round(view.zoom * 100) + '%';
   });
@@ -159,16 +167,24 @@ function hit(el, x, y, tol) {
   }
   return false;
 }
-const topHit = (x, y) => { for (let i = elements.length - 1; i >= 0; i--) if (hit(elements[i], x, y, 6 / view.zoom)) return elements[i]; return null; };
+const topHit = (x, y, px = 6) => { for (let i = elements.length - 1; i >= 0; i--) if (hit(elements[i], x, y, px / view.zoom)) return elements[i]; return null; };
+function selectedEls() { const ids = new Set([selectedId, ...multiSel]); return elements.filter(e => ids.has(e.id)); }
+// Ferramenta de seleção: elemento sob o dedo/mouse (tolerância maior no toque; a caixa de um já selecionado também conta)
+function pickAt(w, pointerType) {
+  const px = pointerType === 'mouse' ? 6 : 14;
+  for (const el of selectedEls()) { const b = bounds(el), m = px / view.zoom; if (w.x >= b.x1 - m && w.x <= b.x2 + m && w.y >= b.y1 - m && w.y <= b.y2 + m) return el; }
+  return topHit(w.x, w.y, px);
+}
 
 // ===== Histórico =====
 const snapshot = () => JSON.stringify(elements);
 function pushHistory() { undoStack.push(snapshot()); if (undoStack.length > 200) undoStack.shift(); redoStack = []; }
-function undo() { if (!undoStack.length) return; redoStack.push(snapshot()); elements = JSON.parse(undoStack.pop()); selectedId = null; changed(); }
-function redo() { if (!redoStack.length) return; undoStack.push(snapshot()); elements = JSON.parse(redoStack.pop()); selectedId = null; changed(); }
+function undo() { if (!undoStack.length) return; redoStack.push(snapshot()); elements = JSON.parse(undoStack.pop()); selectedId = null; multiSel = []; changed(); }
+function redo() { if (!redoStack.length) return; undoStack.push(snapshot()); elements = JSON.parse(redoStack.pop()); selectedId = null; multiSel = []; changed(); }
 function deleteSelected() {
-  if (!selectedId) return; pushHistory();
-  elements = elements.filter(e => e.id !== selectedId); selectedId = null; changed();
+  if (!selectedId && !multiSel.length) return; pushHistory();
+  const ids = new Set([selectedId, ...multiSel]);
+  elements = elements.filter(e => !ids.has(e.id)); selectedId = null; multiSel = []; changed();
 }
 function moveEl(el, dx, dy) {
   if (el.type === 'pen') el.points = el.points.map(p => [p[0] + dx, p[1] + dy]);
@@ -189,7 +205,7 @@ canvas.addEventListener('pointerdown', e => {
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (pointers.size === 2) { // pinça / pan com dois dedos: cancela desenho
     if (current) current = null;
-    if (drag && drag.kind === 'move' && drag.moved) { undoStack.pop(); }
+    if (drag && (drag.kind === 'move' || drag.kind === 'resize') && drag.moved) { elements = JSON.parse(undoStack.pop()); } // desfaz o arrasto parcial
     drag = null;
     const [a, b] = [...pointers.values()];
     pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y), cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2 };
@@ -211,18 +227,26 @@ canvas.addEventListener('pointerdown', e => {
     }
     case 'eraser': drag = { kind: 'erase', erased: false }; eraseAt(w); break;
     case 'select': {
-      const cur = elements.find(x => x.id === selectedId), hs = 12 / view.zoom;
+      const cur = elements.find(x => x.id === selectedId), hs = (e.pointerType === 'mouse' ? 12 : 20) / view.zoom;
       if (cur && cur.type === 'file' && cur.isImage && Math.abs(w.x - (cur.x + cur.w)) < hs && Math.abs(w.y - (cur.y + cur.h)) < hs) {
         drag = { kind: 'resize', el: cur, moved: false, ratio: cur.h / cur.w }; break;
       }
-      const t = topHit(w.x, w.y);
-      selectedId = t ? t.id : null;
-      if (t && t.type === 'file' && e.pointerType !== 'mouse') { // duplo toque (iPad) abre no Drive
+      const t = pickAt(w, e.pointerType);
+      if (!t) {
+        if (e.shiftKey) { drag = { kind: 'band', a: w, b: w }; break; } // Shift+arrastar no vazio: seleção múltipla
+        selectedId = null; multiSel = [];
+        drag = { kind: 'pan', sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y }; // arrastar no vazio: move a tela
+        canvas.style.cursor = 'grabbing'; break;
+      }
+      const inGroup = selectedEls().length > 1 && selectedEls().includes(t);
+      if (e.shiftKey && !inGroup) { if (selectedId && selectedId !== t.id) multiSel.push(selectedId); selectedId = t.id; }
+      else if (!inGroup) { selectedId = t.id; multiSel = []; }
+      if (t.type === 'file' && e.pointerType !== 'mouse') { // duplo toque (iPad) abre no Drive
         const now = Date.now();
         if (lastTap.id === t.id && now - lastTap.t < 400) { openFileEl(t); lastTap = {}; render(); break; }
         lastTap = { id: t.id, t: now };
       }
-      if (t) drag = { kind: 'move', el: t, last: w, moved: false };
+      drag = { kind: 'move', els: inGroup || (e.shiftKey && multiSel.length) ? selectedEls() : [t], last: w, moved: false };
       render(); break;
     }
   }
@@ -238,7 +262,10 @@ function eraseAt(w) {
 }
 
 canvas.addEventListener('pointermove', e => {
-  if (!pointers.has(e.pointerId)) return;
+  if (!pointers.has(e.pointerId)) {
+    if (tool === 'select' && e.pointerType === 'mouse' && !spaceDown) canvas.style.cursor = pickAt(toWorld(e.clientX, e.clientY), 'mouse') ? 'move' : 'grab';
+    return;
+  }
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (pinch && pointers.size >= 2) {
     const [a, b] = [...pointers.values()];
@@ -256,8 +283,10 @@ canvas.addEventListener('pointermove', e => {
   }
   if (drag && drag.kind === 'move') {
     if (!drag.moved) { pushHistory(); drag.moved = true; }
-    moveEl(drag.el, w.x - drag.last.x, w.y - drag.last.y); drag.last = w; render(); return;
+    for (const el of drag.els) moveEl(el, w.x - drag.last.x, w.y - drag.last.y);
+    drag.last = w; render(); return;
   }
+  if (drag && drag.kind === 'band') { drag.b = w; render(); return; }
   if (current) {
     if (current.type === 'pen') current.points.push([w.x, w.y]);
     else {
@@ -283,7 +312,12 @@ function endPointer(e) {
   if (drag) {
     if ((drag.kind === 'move' || drag.kind === 'resize') && drag.moved) changed();
     if (drag.kind === 'erase' && drag.erased) changed();
-    if (drag.kind === 'pan') scheduleSave(false);
+    if (drag.kind === 'pan') { scheduleSave(false); if (tool === 'select') canvas.style.cursor = 'default'; }
+    if (drag.kind === 'band') {
+      const x1 = Math.min(drag.a.x, drag.b.x), x2 = Math.max(drag.a.x, drag.b.x), y1 = Math.min(drag.a.y, drag.b.y), y2 = Math.max(drag.a.y, drag.b.y);
+      const ids = elements.filter(el => { const b = bounds(el); return b.x1 <= x2 && b.x2 >= x1 && b.y1 <= y2 && b.y2 >= y1; }).map(el => el.id);
+      selectedId = ids.pop() || null; multiSel = ids; render();
+    }
     drag = null;
   }
 }
@@ -350,7 +384,7 @@ canvas.addEventListener('dblclick', e => {
 
 // ===== UI =====
 function setTool(t) {
-  tool = t; if (t !== 'select') selectedId = null;
+  tool = t; if (t !== 'select') { selectedId = null; multiSel = []; }
   document.querySelectorAll('#toolbar button').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
   canvas.style.cursor = { hand: 'grab', select: 'default', text: 'text', eraser: 'cell' }[t] || 'crosshair';
   render();
@@ -740,6 +774,7 @@ async function uploadFiles(files, screenPt) {
       // atualiza também os snapshots de desfazer que contêm este elemento
       undoStack = undoStack.map(sn => sn.includes(el.id) ? JSON.stringify(JSON.parse(sn).map(e => e.id === el.id ? { ...el } : e)) : sn);
       setStatus('saved', 'Enviado: ' + el.name);
+      setTool('select'); selectedId = el.id; multiSel = [];
       changed();
     } catch (e) {
       console.error(e);
@@ -813,7 +848,7 @@ window.addEventListener('paste', e => {
 // ===== Início =====
 window.addEventListener('resize', resize);
 try { loadState(JSON.parse(localStorage.getItem(LS_KEY) || 'null')); } catch (e) {}
-setTool('pen'); resize(); initGis(); autoLogin();
+setTool('select'); resize(); initGis(); autoLogin();
 if (location.protocol === 'file:') setStatus('error', 'Abra via http://localhost:8000');
 // Exposto para testes automatizados
 window.__quadrado = { get elements() { return elements; }, get view() { return view; }, undo, redo, saveNow, setTool, setToken: (t) => { accessToken = t; tokenExpiry = Date.now() + 3600e3; } };

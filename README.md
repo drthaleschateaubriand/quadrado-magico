@@ -79,3 +79,12 @@ O token de acesso (válido ~1 h) e o e-mail ficam guardados no `localStorage` (c
 - Sem colaboração em tempo real; se o mesmo quadro estiver aberto em dois dispositivos, vence o último salvamento.
 - Um único quadro por conta (um arquivo JSON).
 - Renovar o token pode exigir interação se o navegador bloquear pop-ups.
+
+## Selecionar, mover e navegar
+
+- A ferramenta **Selecionar** (V) é a padrão ao abrir e depois de enviar arquivos.
+- Arraste **sobre um elemento** (mouse, dedo ou Apple Pencil) para mover só ele; a seleção mostra alças nos cantos (imagens: alça de redimensionar). Ctrl+Z desfaz.
+- Arraste **no espaço vazio** para mover a tela. Toque no vazio limpa a seleção.
+- **Shift + arrastar** no vazio seleciona vários elementos; arraste um deles para mover o grupo.
+- Toque em um cartão de arquivo seleciona; toque duplo (ou clique duplo) abre no Drive.
+- Nas ferramentas de desenho, dois dedos continuam movendo e dando zoom.
