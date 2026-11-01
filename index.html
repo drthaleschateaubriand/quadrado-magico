@@ -5,7 +5,7 @@
 <meta http-equiv="Cache-Control" content="no-cache">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Quadrado Mágico</title>
-<link rel="stylesheet" href="styles.css?v=202611011452">
+<link rel="stylesheet" href="styles.css?v=202611011530">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -21,17 +21,20 @@
   <button data-tool="text" title="Texto (T)">T</button>
   <button data-tool="eraser" title="Borracha (E)">🧽</button>
   <button data-tool="hand" title="Mover tela (H)">✋</button>
-  <label id="fileBtn" class="filebtn" title="Enviar arquivo (PDF, Word, imagens…) — também pode arrastar ou colar">📎 Arquivo<input type="file" id="fileInput" multiple style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden"></label>
-</div>
-<div id="stylebar" class="panel">
-  <label>Traço <input type="color" id="strokeColor" value="#1e1e1e"></label>
-  <label><input type="checkbox" id="fillOn"> Preench. <input type="color" id="fillColor" value="#a5d8ff"></label>
-  <label>Espessura <input type="range" id="strokeWidth" min="1" max="20" value="3"></label>
-  <button id="openBtn" class="hidden" title="Abrir arquivo aqui no app">📂 Abrir</button>
+  <label id="fileBtn" class="filebtn" title="Enviar arquivo (PDF, Word, imagens…) — também pode arrastar ou colar">📎<input type="file" id="fileInput" multiple style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden"></label>
+  <span class="tb-sep"></span>
+  <button id="openBtn" class="hidden" title="Abrir arquivo aqui no app">📂</button>
   <button id="undoBtn" title="Desfazer (Ctrl+Z)">↶</button>
   <button id="redoBtn" title="Refazer (Ctrl+Shift+Z)">↷</button>
   <button id="deleteBtn" title="Excluir seleção (Del)">🗑️</button>
+  <button id="optsBtn" title="Opções" aria-expanded="false">▾</button>
+  <div id="stylebar" class="hidden">
+    <label>Traço <input type="color" id="strokeColor" value="#1e1e1e"></label>
+    <label><input type="checkbox" id="fillOn"> Preench. <input type="color" id="fillColor" value="#a5d8ff"></label>
+    <label>Espessura <input type="range" id="strokeWidth" min="1" max="20" value="3"></label>
+  </div>
 </div>
+
 <div id="zoombar" class="panel">
   <button id="zoomOut">−</button><span id="zoomLabel">100%</span><button id="zoomIn">+</button><button id="zoomReset" title="Redefinir">⟲</button>
 </div>
@@ -41,8 +44,8 @@
   <button id="saveBtn" disabled>Salvar agora</button>
   <button id="logoutBtn" class="hidden">Sair</button>
 </div>
-<script src="viewer.js?v=202611011452"></script>
-<script src="inline.js?v=202611011452"></script>
-<script src="app.js?v=202611011452"></script>
+<script src="viewer.js?v=202611011530"></script>
+<script src="inline.js?v=202611011530"></script>
+<script src="app.js?v=202611011530"></script>
 </body>
 </html>

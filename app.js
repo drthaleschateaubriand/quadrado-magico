@@ -394,12 +394,26 @@ canvas.addEventListener('dblclick', e => {
 // ===== UI =====
 function setTool(t) {
   tool = t; if (t !== 'select') { selectedId = null; multiSel = []; }
-  document.querySelectorAll('#toolbar button').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
+  document.querySelectorAll('#toolbar button[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
   canvas.style.cursor = { hand: 'grab', select: 'default', text: 'text', eraser: 'cell' }[t] || 'crosshair';
   render();
 }
-document.querySelectorAll('#toolbar button').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
+document.querySelectorAll('#toolbar button[data-tool]').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
 const $ = id => document.getElementById(id);
+// ===== Painel de opções (rebatível) =====
+(function () {
+  const btn = $('optsBtn'), pnl = $('stylebar');
+  function setOpen(o) {
+    pnl.classList.toggle('hidden', !o); btn.classList.toggle('open', o); btn.setAttribute('aria-expanded', o);
+    try { localStorage.setItem('qm-opts-open', o ? '1' : '0'); } catch (e) {}
+  }
+  let init = false; try { init = localStorage.getItem('qm-opts-open') === '1'; } catch (e) {}
+  setOpen(init);
+  btn.addEventListener('click', e => { e.stopPropagation(); setOpen(pnl.classList.contains('hidden')); });
+  document.addEventListener('pointerdown', e => { if (!pnl.classList.contains('hidden') && !pnl.contains(e.target) && e.target !== btn) setOpen(false); }, true);
+  window.addEventListener('keydown', e => { if (e.key === 'Escape' && !pnl.classList.contains('hidden')) setOpen(false); });
+  window.QMOpts = { setOpen };
+})();
 function applyStyleToSelection(fn) {
   const el = elements.find(e => e.id === selectedId); if (!el) return;
   pushHistory(); fn(el); changed();
