@@ -18,3 +18,28 @@ label{display:flex;align-items:center;gap:3px}
 .hidden{display:none!important}
 #textEditor{position:fixed;z-index:20;border:1px dashed #4dabf7;background:transparent;outline:none;resize:none;padding:0;margin:0;line-height:1.25;font-family:inherit;min-width:40px;overflow:hidden;white-space:pre;-webkit-user-select:text;user-select:text}
 .filebtn{position:relative;display:inline-flex;align-items:center;background:#f1f3f5;border-radius:7px;height:36px;font-size:16px;cursor:pointer;padding:0 8px}.filebtn:hover{background:#e7f5ff}
+
+/* Visualizador de arquivos */
+#viewer { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 1000; display: flex; align-items: center; justify-content: center; }
+#viewer.hidden { display: none; }
+.vw-box { background: #fff; width: min(1100px, 96vw); height: 92vh; border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 10px 40px rgba(0,0,0,.4); }
+.vw-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid #dee2e6; }
+.vw-title { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vw-head button, .vw-dl2 { border: 1px solid #ced4da; background: #f8f9fa; border-radius: 8px; padding: 6px 12px; font-size: 15px; cursor: pointer; }
+.vw-x { font-size: 18px !important; }
+.vw-body { flex: 1; overflow: auto; display: flex; }
+.vw-holder { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.vw-frame { flex: 1; width: 100%; border: 0; min-height: 80vh; }
+.vw-img { max-width: 100%; max-height: 100%; object-fit: contain; margin: auto; }
+.vw-media { max-width: 100%; max-height: 100%; margin: auto; }
+.vw-pre { margin: 0; padding: 16px; white-space: pre-wrap; word-break: break-word; font-size: 13px; }
+.vw-doc { padding: 24px 40px; max-width: 850px; margin: 0 auto; line-height: 1.5; }
+.vw-doc img { max-width: 100%; }
+.vw-sheet { overflow: auto; padding: 8px; }
+.vw-sheet table { border-collapse: collapse; font-size: 13px; }
+.vw-sheet td, .vw-sheet th { border: 1px solid #ced4da; padding: 3px 6px; }
+.vw-tabs { display: flex; gap: 4px; padding: 6px; }
+.vw-load, .vw-other { margin: auto; text-align: center; color: #495057; }
+.vw-icon { font-size: 64px; }
+.vw-spin { width: 44px; height: 44px; border: 4px solid #dee2e6; border-top-color: #4dabf7; border-radius: 50%; animation: vwspin 1s linear infinite; margin: 0 auto 12px; }
+@keyframes vwspin { to { transform: rotate(360deg); } }

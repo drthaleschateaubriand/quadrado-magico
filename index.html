@@ -26,6 +26,7 @@
   <label>Traço <input type="color" id="strokeColor" value="#1e1e1e"></label>
   <label><input type="checkbox" id="fillOn"> Preench. <input type="color" id="fillColor" value="#a5d8ff"></label>
   <label>Espessura <input type="range" id="strokeWidth" min="1" max="20" value="3"></label>
+  <button id="openBtn" class="hidden" title="Abrir arquivo aqui no app">📂 Abrir</button>
   <button id="undoBtn" title="Desfazer (Ctrl+Z)">↶</button>
   <button id="redoBtn" title="Refazer (Ctrl+Shift+Z)">↷</button>
   <button id="deleteBtn" title="Excluir seleção (Del)">🗑️</button>
@@ -39,6 +40,7 @@
   <button id="saveBtn" disabled>Salvar agora</button>
   <button id="logoutBtn" class="hidden">Sair</button>
 </div>
+<script src="viewer.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

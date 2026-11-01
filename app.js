@@ -109,7 +109,7 @@ let raf = 0;
 function render() {
   if (raf) return;
   raf = requestAnimationFrame(() => {
-    raf = 0;
+    raf = 0; updateOpenBtn();
     const dpr = window.devicePixelRatio || 1;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, innerWidth, innerHeight);
@@ -241,7 +241,7 @@ canvas.addEventListener('pointerdown', e => {
       const inGroup = selectedEls().length > 1 && selectedEls().includes(t);
       if (e.shiftKey && !inGroup) { if (selectedId && selectedId !== t.id) multiSel.push(selectedId); selectedId = t.id; }
       else if (!inGroup) { selectedId = t.id; multiSel = []; }
-      if (t.type === 'file' && e.pointerType !== 'mouse') { // duplo toque (iPad) abre no Drive
+      if (t.type === 'file' && e.pointerType !== 'mouse') { // duplo toque (iPad) abre o visualizador
         const now = Date.now();
         if (lastTap.id === t.id && now - lastTap.t < 400) { openFileEl(t); lastTap = {}; render(); break; }
         lastTap = { id: t.id, t: now };
@@ -365,6 +365,11 @@ function commitText() {
   const ed = editing; editing = null;
   const text = editor.value.replace(/\s+$/, '');
   editor.classList.add('hidden');
+  if (QMViewer.isDataUrl(text)) {
+    if (ed.backup) { delete ed.backup._hidden; elements.push(ed.backup); }
+    addDataUrl(text, null);
+    render(); return;
+  }
   if (ed.backup) {
     const old = ed.backup; delete old._hidden;
     if (text === old.text) { elements.push(old); render(); return; }
@@ -400,7 +405,7 @@ $('fillColor').addEventListener('change', e => { style.fill = e.target.value; ap
 $('fillOn').addEventListener('change', e => { style.fillOn = e.target.checked; applyStyleToSelection(el => el.fillOn = style.fillOn); });
 $('strokeWidth').addEventListener('change', e => { style.width = +e.target.value; applyStyleToSelection(el => el.width = style.width); });
 document.querySelectorAll('#stylebar input').forEach(i => i.addEventListener('change', () => i.blur()));
-$('undoBtn').onclick = undo; $('redoBtn').onclick = redo; $('deleteBtn').onclick = deleteSelected;
+$('openBtn').onclick = () => openFileEl(selectedFile()); $('undoBtn').onclick = undo; $('redoBtn').onclick = redo; $('deleteBtn').onclick = deleteSelected;
 $('zoomIn').onclick = () => zoomAt(innerWidth / 2, innerHeight / 2, 1.2);
 $('zoomOut').onclick = () => zoomAt(innerWidth / 2, innerHeight / 2, 1 / 1.2);
 $('zoomReset').onclick = () => { view = { x: 0, y: 0, zoom: 1 }; render(); scheduleSave(false); };
@@ -426,7 +431,9 @@ function serialize() {
 function loadState(data) {
   if (!data || !Array.isArray(data.elements)) return false;
   elements = data.elements.filter(e => !e.uploading); if (data.viewport) view = { ...view, ...data.viewport };
-  undoStack = []; redoStack = []; selectedId = null; render(); return true;
+  undoStack = []; redoStack = []; selectedId = null;
+  if (migrateDataUrlTexts()) { saveLocal(); setTimeout(uploadInlineFiles, 0); }
+  render(); return true;
 }
 function saveLocal() { try { localStorage.setItem(LS_KEY, JSON.stringify(serialize())); } catch (e) { console.warn(e); } }
 function changed() { render(); scheduleSave(true); }
@@ -577,6 +584,7 @@ async function afterConnect() {
   showConnected(true);
   await loadFromDrive();
   retryImages();
+  uploadInlineFiles();
   fetchEmail();
 }
 async function login() {
@@ -686,12 +694,55 @@ function drawFileEl(el) {
   while (ctx.measureText(name).width > maxW && name.length > 4) name = name.slice(0, -4) + '…';
   ctx.fillText(name, el.x + 58, el.y + el.h / 2 - 10);
   ctx.font = '12px sans-serif'; ctx.fillStyle = '#868e96';
-  ctx.fillText(el.uploading ? 'Enviando…' : fmtSize(el.size) + ' · abrir no Drive', el.x + 58, el.y + el.h / 2 + 11);
+  ctx.fillText(el.uploading ? 'Enviando…' : fmtSize(el.size) + ' · clique 2x para abrir', el.x + 58, el.y + el.h / 2 + 11);
   ctx.restore();
 }
+// Abre o arquivo DENTRO do app (visualizador), nunca no Google Drive.
 function openFileEl(el) {
-  const url = el.webViewLink || (el.fileId ? `https://drive.google.com/file/d/${el.fileId}/view` : null);
-  if (url) window.open(url, '_blank', 'noopener');
+  if (!el || el.type !== 'file') return;
+  return QMViewer.open(el, {
+    getToken,
+    refresh: async () => { accessToken = null; tokenExpiry = 0; clearStoredToken(true); await requestToken('', 15000); }
+  });
+}
+function selectedFile() { const t = selectedId && elements.find(e => e.id === selectedId); return t && t.type === 'file' && !multiSel.length ? t : null; }
+function updateOpenBtn() { const b = document.getElementById('openBtn'); if (b) b.classList.toggle('hidden', !selectedFile()); }
+// Textos "data:...;base64" viram arquivos (cartões) — corrige o bug do texto gigante no quadro.
+function dataUrlToFile(text) { const d = QMViewer.dataUrlToBlob(text); return new File([d.blob], d.name, { type: d.mime }); }
+function migrateDataUrlTexts() {
+  let n = 0;
+  elements = elements.map(e => {
+    if (e.type !== 'text' || !QMViewer.isDataUrl(e.text)) return e;
+    n++;
+    let d; try { d = QMViewer.dataUrlToBlob(e.text); } catch (err) { return e; }
+    return { id: e.id, type: 'file', x: e.x, y: e.y, w: 260, h: 72, fileId: null, name: d.name, mimeType: d.mime, size: d.blob.size,
+      webViewLink: null, isImage: false, dataUrl: e.text.trim(), stroke: e.stroke, fill: e.fill, fillOn: false, width: 1 };
+  });
+  return n;
+}
+function addDataUrl(text, screenPt) {
+  let f; try { f = dataUrlToFile(text); } catch (e) { setStatus('error', 'Conteúdo inválido'); return; }
+  if (accessToken || tokenExpiry) return uploadFiles([f], screenPt);
+  const c = screenPt ? toWorld(screenPt.x, screenPt.y) : toWorld(innerWidth / 2, innerHeight / 2);
+  pushHistory();
+  elements.push({ id: uid(), type: 'file', x: c.x - 130, y: c.y - 36, w: 260, h: 72, fileId: null, name: f.name, mimeType: f.type, size: f.size,
+    webViewLink: null, isImage: false, dataUrl: text.trim(), stroke: style.stroke, fill: style.fill, fillOn: false, width: 1 });
+  changed();
+}
+// Envia ao Drive os cartões que ainda guardam o conteúdo embutido (dataUrl).
+let inlineUploading = false;
+async function uploadInlineFiles() {
+  if (inlineUploading || !accessToken) return; inlineUploading = true;
+  try {
+    for (const el of elements.filter(e => e.type === 'file' && e.dataUrl && !e.fileId)) {
+      try {
+        const parent = await ensureFilesFolder();
+        const res = await resumableUpload(dataUrlToFile(el.dataUrl), parent, () => {});
+        el.fileId = res.id; el.webViewLink = res.webViewLink || null; el.mimeType = res.mimeType || el.mimeType; delete el.dataUrl;
+        changed();
+      } catch (e) { console.error(e); }
+    }
+  } finally { inlineUploading = false; }
 }
 
 async function findOrCreate(name, parent, mime) {
@@ -835,14 +886,18 @@ fileInput.addEventListener('change', () => { uploadFiles(fileInput.files); fileI
 window.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
 window.addEventListener('drop', e => {
   e.preventDefault();
-  if (e.dataTransfer && e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files, { x: e.clientX, y: e.clientY });
+  if (e.dataTransfer && e.dataTransfer.files.length) { uploadFiles(e.dataTransfer.files, { x: e.clientX, y: e.clientY }); return; }
+  const txt = e.dataTransfer && (e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain'));
+  if (QMViewer.isDataUrl(txt)) { addDataUrl(txt, { x: e.clientX, y: e.clientY }); }
 });
 let lastPointer = null;
 window.addEventListener('pointermove', e => { lastPointer = { x: e.clientX, y: e.clientY }; });
 window.addEventListener('paste', e => {
   if (editing) return;
   const files = e.clipboardData ? [...e.clipboardData.files] : [];
-  if (files.length) { e.preventDefault(); uploadFiles(files, lastPointer); }
+  if (files.length) { e.preventDefault(); uploadFiles(files, lastPointer); return; }
+  const txt = e.clipboardData && e.clipboardData.getData('text/plain');
+  if (QMViewer.isDataUrl(txt)) { e.preventDefault(); addDataUrl(txt, lastPointer); }
 });
 
 // ===== Início =====
@@ -851,4 +906,4 @@ try { loadState(JSON.parse(localStorage.getItem(LS_KEY) || 'null')); } catch (e)
 setTool('select'); resize(); initGis(); autoLogin();
 if (location.protocol === 'file:') setStatus('error', 'Abra via http://localhost:8000');
 // Exposto para testes automatizados
-window.__quadrado = { get elements() { return elements; }, get view() { return view; }, undo, redo, saveNow, setTool, setToken: (t) => { accessToken = t; tokenExpiry = Date.now() + 3600e3; } };
+window.__quadrado = { openFileEl, migrateDataUrlTexts, loadState, get elements() { return elements; }, get view() { return view; }, undo, redo, saveNow, setTool, setToken: (t) => { accessToken = t; tokenExpiry = Date.now() + 3600e3; } };
