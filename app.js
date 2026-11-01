@@ -9,13 +9,14 @@ const SAVE_DEBOUNCE_MS = 2000;
 
 // ===== Estado =====
 const canvas = document.getElementById('board');
-const ctx = canvas.getContext('2d');
+let ctx = canvas.getContext('2d');
 let elements = [];
 let view = { x: 0, y: 0, zoom: 1 };
 let tool = 'pen';
 let style = { stroke: '#1e1e1e', fill: '#a5d8ff', fillOn: false, width: 3 };
 let selectedId = null;
 let undoStack = [], redoStack = [];
+let lastTap = {};
 let current = null;      // elemento em criação
 let drag = null;         // estado da interação atual
 let spaceDown = false;
@@ -35,6 +36,7 @@ function resize() {
 
 // ===== Desenho =====
 function bounds(el) {
+  if (el.type === 'file') return { x1: el.x, y1: el.y, x2: el.x + el.w, y2: el.y + el.h };
   if (el.type === 'pen') {
     let xs = el.points.map(p => p[0]), ys = el.points.map(p => p[1]);
     return { x1: Math.min(...xs), y1: Math.min(...ys), x2: Math.max(...xs), y2: Math.max(...ys) };
@@ -86,6 +88,7 @@ function drawEl(el) {
       }
       break;
     }
+    case 'file': drawFileEl(el); break;
     case 'text': {
       ctx.font = `${el.fontSize}px sans-serif`; ctx.fillStyle = el.stroke; ctx.textBaseline = 'top';
       el.text.split('\n').forEach((l, i) => ctx.fillText(l, el.x, el.y + i * el.fontSize * 1.25));
@@ -117,7 +120,9 @@ function render() {
     if (sel) {
       const b = bounds(sel), m = 6 / view.zoom;
       ctx.save(); ctx.setLineDash([6 / view.zoom, 4 / view.zoom]); ctx.strokeStyle = '#4dabf7'; ctx.lineWidth = 1.5 / view.zoom;
-      ctx.strokeRect(b.x1 - m, b.y1 - m, b.x2 - b.x1 + 2 * m, b.y2 - b.y1 + 2 * m); ctx.restore();
+      ctx.strokeRect(b.x1 - m, b.y1 - m, b.x2 - b.x1 + 2 * m, b.y2 - b.y1 + 2 * m);
+      if (sel.type === 'file' && sel.isImage) { const h = 10 / view.zoom; ctx.setLineDash([]); ctx.fillStyle = '#fff'; ctx.fillRect(b.x2 - h / 2, b.y2 - h / 2, h, h); ctx.strokeRect(b.x2 - h / 2, b.y2 - h / 2, h, h); }
+      ctx.restore();
     }
     document.getElementById('zoomLabel').textContent = Math.round(view.zoom * 100) + '%';
   });
@@ -130,6 +135,7 @@ function distSeg(px, py, x1, y1, x2, y2) {
   return Math.hypot(px - x1 - t * dx, py - y1 - t * dy);
 }
 function hit(el, x, y, tol) {
+  if (el.type === 'file') return x >= el.x - tol && x <= el.x + el.w + tol && y >= el.y - tol && y <= el.y + el.h + tol;
   tol += el.width / 2;
   if (el.type === 'pen') {
     const p = el.points; if (p.length === 1) return Math.hypot(x - p[0][0], y - p[0][1]) < tol;
@@ -166,7 +172,7 @@ function deleteSelected() {
 }
 function moveEl(el, dx, dy) {
   if (el.type === 'pen') el.points = el.points.map(p => [p[0] + dx, p[1] + dy]);
-  else if (el.type === 'text') { el.x += dx; el.y += dy; }
+  else if (el.type === 'text' || el.type === 'file') { el.x += dx; el.y += dy; }
   else { el.x1 += dx; el.x2 += dx; el.y1 += dy; el.y2 += dy; }
 }
 
@@ -205,8 +211,17 @@ canvas.addEventListener('pointerdown', e => {
     }
     case 'eraser': drag = { kind: 'erase', erased: false }; eraseAt(w); break;
     case 'select': {
+      const cur = elements.find(x => x.id === selectedId), hs = 12 / view.zoom;
+      if (cur && cur.type === 'file' && cur.isImage && Math.abs(w.x - (cur.x + cur.w)) < hs && Math.abs(w.y - (cur.y + cur.h)) < hs) {
+        drag = { kind: 'resize', el: cur, moved: false, ratio: cur.h / cur.w }; break;
+      }
       const t = topHit(w.x, w.y);
       selectedId = t ? t.id : null;
+      if (t && t.type === 'file' && e.pointerType !== 'mouse') { // duplo toque (iPad) abre no Drive
+        const now = Date.now();
+        if (lastTap.id === t.id && now - lastTap.t < 400) { openFileEl(t); lastTap = {}; render(); break; }
+        lastTap = { id: t.id, t: now };
+      }
       if (t) drag = { kind: 'move', el: t, last: w, moved: false };
       render(); break;
     }
@@ -235,6 +250,10 @@ canvas.addEventListener('pointermove', e => {
   const w = toWorld(e.clientX, e.clientY);
   if (drag && drag.kind === 'pan') { view.x = drag.vx + e.clientX - drag.sx; view.y = drag.vy + e.clientY - drag.sy; render(); return; }
   if (drag && drag.kind === 'erase') { eraseAt(w); return; }
+  if (drag && drag.kind === 'resize') {
+    if (!drag.moved) { pushHistory(); drag.moved = true; }
+    drag.el.w = Math.max(20, w.x - drag.el.x); drag.el.h = drag.el.w * drag.ratio; render(); return;
+  }
   if (drag && drag.kind === 'move') {
     if (!drag.moved) { pushHistory(); drag.moved = true; }
     moveEl(drag.el, w.x - drag.last.x, w.y - drag.last.y); drag.last = w; render(); return;
@@ -262,7 +281,7 @@ function endPointer(e) {
     current = null; changed();
   }
   if (drag) {
-    if (drag.kind === 'move' && drag.moved) changed();
+    if ((drag.kind === 'move' || drag.kind === 'resize') && drag.moved) changed();
     if (drag.kind === 'erase' && drag.erased) changed();
     if (drag.kind === 'pan') scheduleSave(false);
     drag = null;
@@ -326,6 +345,7 @@ function commitText() {
 canvas.addEventListener('dblclick', e => {
   const w = toWorld(e.clientX, e.clientY), t = topHit(w.x, w.y);
   if (t && t.type === 'text') openTextEditor(t, w);
+  else if (t && t.type === 'file') openFileEl(t);
 });
 
 // ===== UI =====
@@ -371,7 +391,7 @@ function serialize() {
 }
 function loadState(data) {
   if (!data || !Array.isArray(data.elements)) return false;
-  elements = data.elements; if (data.viewport) view = { ...view, ...data.viewport };
+  elements = data.elements.filter(e => !e.uploading); if (data.viewport) view = { ...view, ...data.viewport };
   undoStack = []; redoStack = []; selectedId = null; render(); return true;
 }
 function saveLocal() { try { localStorage.setItem(LS_KEY, JSON.stringify(serialize())); } catch (e) { console.warn(e); } }
@@ -486,6 +506,7 @@ async function saveNow() {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: json
     });
     dirty = false;
+    try { await uploadBoardPng(); } catch (e) { console.error('PNG', e); }
     setStatus('saved', 'Salvo ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
   } catch (err) {
     console.error(err); setStatus('error', 'Erro ao salvar');
@@ -521,6 +542,7 @@ async function fetchEmail() {
 async function afterConnect() {
   showConnected(true);
   await loadFromDrive();
+  retryImages();
   fetchEmail();
 }
 async function login() {
@@ -551,13 +573,243 @@ async function autoLogin() {
 }
 function logout() {
   if (accessToken && window.google && google.accounts) google.accounts.oauth2.revoke(accessToken, () => {});
-  accessToken = null; tokenExpiry = 0; folderId = fileId = null; userEmail = '';
+  accessToken = null; tokenExpiry = 0; folderId = fileId = null; filesFolderId = pngFileId = null; lastPngKey = ''; userEmail = '';
   localStorage.removeItem('quadrado-magico-logged'); localStorage.removeItem(TOKEN_KEY);
   $('loginBtn').classList.remove('hidden'); $('logoutBtn').classList.add('hidden'); $('saveBtn').disabled = true;
   setStatus('off', 'Não conectado');
 }
 $('loginBtn').onclick = login; $('logoutBtn').onclick = logout; $('saveBtn').onclick = saveNow;
 window.addEventListener('beforeunload', e => { saveLocal(); if (dirty && accessToken) { e.preventDefault(); e.returnValue = ''; } });
+
+// ===== Arquivos (qualquer tipo) e imagens no quadro =====
+const PNG_NAME = 'quadrado-magico.png';
+const FILES_FOLDER = 'Arquivos';
+const imgCache = new Map(); // fileId -> { img, status }
+let filesFolderId = null, pngFileId = null, lastPngKey = '';
+
+function fmtSize(n) {
+  n = +n || 0; if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1048576).toFixed(1) + ' MB';
+}
+function fileIcon(mime, name) {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  if (mime === 'application/pdf' || ext === 'pdf') return '📕';
+  if (/word|document/.test(mime) || /^(docx?|odt|rtf)$/.test(ext)) return '📘';
+  if (/sheet|excel|csv/.test(mime) || /^(xlsx?|ods|csv)$/.test(ext)) return '📗';
+  if (/presentation|powerpoint/.test(mime) || /^(pptx?|odp|key)$/.test(ext)) return '📙';
+  if (mime.startsWith('video/')) return '🎬';
+  if (mime.startsWith('audio/')) return '🎵';
+  if (/zip|compressed|tar|rar/.test(mime)) return '🗜️';
+  if (mime.startsWith('text/')) return '📄';
+  return '📎';
+}
+function getImage(el) {
+  if (!el.fileId) return { img: null, status: 'none' };
+  let c = imgCache.get(el.fileId);
+  if (c) return c;
+  c = { img: null, status: 'none' }; imgCache.set(el.fileId, c);
+  if (accessToken) loadDriveImage(el.fileId, c);
+  return c;
+}
+async function loadDriveImage(id, c) {
+  c.status = 'loading';
+  try {
+    const blob = await (await driveFetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`)).blob();
+    await setCacheBlob(id, blob);
+  } catch (e) { console.error(e); c.status = 'error'; render(); }
+}
+function setCacheBlob(id, blob) {
+  return new Promise(res => {
+    const img = new Image(), c = imgCache.get(id) || {};
+    img.onload = () => { c.img = img; c.status = 'ok'; imgCache.set(id, c); render(); res(img); };
+    img.onerror = () => { c.status = 'error'; imgCache.set(id, c); render(); res(null); };
+    img.src = URL.createObjectURL(blob);
+  });
+}
+function retryImages() { for (const [id, c] of imgCache) if (c.status === 'none') loadDriveImage(id, c); render(); }
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+function drawFileEl(el) {
+  if (el.isImage) {
+    const c = getImage(el);
+    if (c.img) { ctx.drawImage(c.img, el.x, el.y, el.w, el.h); return; }
+    ctx.fillStyle = '#f1f3f5'; ctx.fillRect(el.x, el.y, el.w, el.h);
+    ctx.strokeStyle = '#ced4da'; ctx.lineWidth = 1; ctx.strokeRect(el.x, el.y, el.w, el.h);
+    ctx.fillStyle = '#868e96'; ctx.font = '14px sans-serif'; ctx.textBaseline = 'middle';
+    ctx.fillText(c.status === 'error' ? '⚠️ ' + el.name : (el.uploading ? 'Enviando… ' : '🖼️ ') + el.name, el.x + 8, el.y + el.h / 2, el.w - 16);
+    return;
+  }
+  ctx.save();
+  roundRect(el.x, el.y, el.w, el.h, 10); ctx.fillStyle = '#fff'; ctx.fill();
+  ctx.strokeStyle = '#adb5bd'; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.textBaseline = 'middle'; ctx.font = '30px sans-serif'; ctx.fillStyle = '#000';
+  ctx.fillText(fileIcon(el.mimeType || '', el.name), el.x + 12, el.y + el.h / 2);
+  ctx.font = '600 14px sans-serif'; ctx.fillStyle = '#212529';
+  let name = el.name; const maxW = el.w - 70;
+  while (ctx.measureText(name).width > maxW && name.length > 4) name = name.slice(0, -4) + '…';
+  ctx.fillText(name, el.x + 58, el.y + el.h / 2 - 10);
+  ctx.font = '12px sans-serif'; ctx.fillStyle = '#868e96';
+  ctx.fillText(el.uploading ? 'Enviando…' : fmtSize(el.size) + ' · abrir no Drive', el.x + 58, el.y + el.h / 2 + 11);
+  ctx.restore();
+}
+function openFileEl(el) {
+  const url = el.webViewLink || (el.fileId ? `https://drive.google.com/file/d/${el.fileId}/view` : null);
+  if (url) window.open(url, '_blank', 'noopener');
+}
+
+async function findOrCreate(name, parent, mime) {
+  const query = `name='${name.replace(/'/g, "\\'")}' and '${parent}' in parents and trashed=false` + (mime ? ` and mimeType='${mime}'` : '');
+  const r = await (await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q(query)}&fields=files(id)`)).json();
+  return r.files && r.files.length ? r.files[0].id : null;
+}
+async function ensureFilesFolder() {
+  if (!folderId) folderId = await findOrCreateFolder();
+  if (filesFolderId) return filesFolderId;
+  filesFolderId = await findOrCreate(FILES_FOLDER, folderId, 'application/vnd.google-apps.folder');
+  if (!filesFolderId) {
+    const c = await (await driveFetch('https://www.googleapis.com/drive/v3/files?fields=id', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: FILES_FOLDER, mimeType: 'application/vnd.google-apps.folder', parents: [folderId] })
+    })).json();
+    filesFolderId = c.id;
+  }
+  return filesFolderId;
+}
+// Upload resumível (serve para arquivos grandes) com progresso via XHR.
+async function resumableUpload(file, parent, onProgress, retry = true) {
+  const token = await getToken();
+  const mime = file.type || 'application/octet-stream';
+  const init = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,name,mimeType,size,webViewLink', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': mime, 'X-Upload-Content-Length': String(file.size) },
+    body: JSON.stringify({ name: file.name || 'arquivo', mimeType: mime, parents: [parent] })
+  });
+  if (init.status === 401 && retry) { accessToken = null; tokenExpiry = 0; clearStoredToken(true); await requestToken('', 15000); return resumableUpload(file, parent, onProgress, false); }
+  if (!init.ok) throw new Error('Drive ' + init.status + ': ' + await init.text());
+  const url = init.headers.get('Location');
+  if (!url) throw new Error('Drive não retornou a URL de upload');
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open('PUT', url);
+    x.setRequestHeader('Content-Type', mime);
+    x.upload.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+    x.onload = () => { if (x.status >= 200 && x.status < 300) resolve(JSON.parse(x.responseText)); else reject(new Error('Upload ' + x.status + ': ' + x.responseText)); };
+    x.onerror = () => reject(new Error('Falha de rede no upload'));
+    x.send(file);
+  });
+}
+function imageSize(file) {
+  return new Promise(res => {
+    const img = new Image(), u = URL.createObjectURL(file);
+    img.onload = () => res({ w: img.naturalWidth, h: img.naturalHeight, blobUrl: u, img });
+    img.onerror = () => res(null);
+    img.src = u;
+  });
+}
+let uploadsActive = 0;
+async function uploadFiles(files, screenPt) {
+  files = [...files]; if (!files.length) return;
+  if (!accessToken && !tokenExpiry) { setStatus('error', 'Entre com Google para enviar arquivos'); return; }
+  const center = screenPt ? toWorld(screenPt.x, screenPt.y) : toWorld(innerWidth / 2, innerHeight / 2);
+  let offset = 0;
+  for (const file of files) {
+    const isImage = /^image\/(png|jpe?g|gif|webp|bmp|svg\+xml|avif)$/.test(file.type);
+    let w = 260, h = 72, info = null;
+    if (isImage) {
+      info = await imageSize(file);
+      if (info) { const sc = Math.min(1, 400 / Math.max(info.w, info.h)); w = Math.max(20, info.w * sc); h = Math.max(20, info.h * sc); }
+    }
+    const el = {
+      id: uid(), type: 'file', x: center.x - w / 2, y: center.y - h / 2 + offset, w, h,
+      fileId: null, name: file.name || 'arquivo', mimeType: file.type || 'application/octet-stream', size: file.size,
+      webViewLink: null, isImage: !!(isImage && info), uploading: true,
+      stroke: style.stroke, fill: style.fill, fillOn: false, width: 1
+    };
+    offset += h + 20;
+    pushHistory(); elements.push(el); render();
+    uploadsActive++;
+    try {
+      const parent = await ensureFilesFolder();
+      const res = await resumableUpload(file, parent, p => setStatus('saving', `Enviando ${el.name} ${Math.round(p * 100)}%`));
+      el.fileId = res.id; el.webViewLink = res.webViewLink || null; el.mimeType = res.mimeType || el.mimeType; el.size = +res.size || el.size;
+      if (el.isImage && info) imgCache.set(res.id, { img: info.img, status: 'ok' });
+      delete el.uploading;
+      // atualiza também os snapshots de desfazer que contêm este elemento
+      undoStack = undoStack.map(sn => sn.includes(el.id) ? JSON.stringify(JSON.parse(sn).map(e => e.id === el.id ? { ...el } : e)) : sn);
+      setStatus('saved', 'Enviado: ' + el.name);
+      changed();
+    } catch (e) {
+      console.error(e);
+      elements = elements.filter(x => x !== el); undoStack.pop();
+      setStatus('error', 'Erro ao enviar ' + el.name);
+      render();
+    } finally { uploadsActive--; }
+  }
+}
+
+// Exporta o quadro inteiro como PNG (fundo branco + margem)
+async function renderBoardPng() {
+  const list = elements.filter(e => !e.uploading);
+  if (!list.length) return null;
+  let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+  for (const el of list) {
+    const b = bounds(el), m = (el.width || 1) / 2;
+    x1 = Math.min(x1, b.x1 - m); y1 = Math.min(y1, b.y1 - m); x2 = Math.max(x2, b.x2 + m); y2 = Math.max(y2, b.y2 + m);
+  }
+  const pad = 40, W = x2 - x1 + 2 * pad, H = y2 - y1 + 2 * pad;
+  const scale = Math.min(2, 4096 / Math.max(W, H));
+  const off = document.createElement('canvas');
+  off.width = Math.max(1, Math.round(W * scale)); off.height = Math.max(1, Math.round(H * scale));
+  const octx = off.getContext('2d');
+  octx.fillStyle = '#fff'; octx.fillRect(0, 0, off.width, off.height);
+  octx.setTransform(scale, 0, 0, scale, (pad - x1) * scale, (pad - y1) * scale);
+  const saved = ctx; ctx = octx;
+  try { for (const el of list) drawEl(el); } finally { ctx = saved; }
+  return new Promise(res => off.toBlob(res, 'image/png'));
+}
+async function uploadBoardPng() {
+  const pendingImgs = elements.some(e => e.type === 'file' && e.isImage && !(imgCache.get(e.fileId) || {}).img);
+  const key = JSON.stringify(elements);
+  if (key === lastPngKey && !pendingImgs) return;
+  const blob = await renderBoardPng();
+  if (!blob) return;
+  if (!folderId) folderId = await findOrCreateFolder();
+  if (!pngFileId) pngFileId = await findOrCreate(PNG_NAME, folderId);
+  if (!pngFileId) {
+    const boundary = 'qmpng' + Date.now();
+    const meta = JSON.stringify({ name: PNG_NAME, mimeType: 'image/png', parents: [folderId] });
+    const body = new Blob([`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: image/png\r\n\r\n`, blob, `\r\n--${boundary}--`]);
+    const r = await (await driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+      method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + boundary }, body
+    })).json();
+    pngFileId = r.id;
+  } else {
+    await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${pngFileId}?uploadType=media`, {
+      method: 'PATCH', headers: { 'Content-Type': 'image/png' }, body: blob
+    });
+  }
+  if (!pendingImgs) lastPngKey = key;
+}
+
+// Botão "Arquivo", arrastar-e-soltar e colar
+const fileInput = document.getElementById('fileInput');
+document.getElementById('fileBtn').addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => { uploadFiles(fileInput.files); fileInput.value = ''; });
+window.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+window.addEventListener('drop', e => {
+  e.preventDefault();
+  if (e.dataTransfer && e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files, { x: e.clientX, y: e.clientY });
+});
+let lastPointer = null;
+window.addEventListener('pointermove', e => { lastPointer = { x: e.clientX, y: e.clientY }; });
+window.addEventListener('paste', e => {
+  if (editing) return;
+  const files = e.clipboardData ? [...e.clipboardData.files] : [];
+  if (files.length) { e.preventDefault(); uploadFiles(files, lastPointer); }
+});
 
 // ===== Início =====
 window.addEventListener('resize', resize);

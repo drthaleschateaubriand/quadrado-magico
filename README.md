@@ -61,6 +61,17 @@ O Client ID não é segredo (ele aparece no navegador de qualquer forma), então
 - Cada alteração agenda um salvamento 2 s depois da última mudança (debounce).
 - Quando o token de acesso expira (~1 h), o app pede um novo automaticamente (pode aparecer um pop-up rápido do Google; permita pop-ups para o site).
 
+## Imagem do quadro no Drive
+A cada salvamento o app também gera **`quadrado-magico.png`** (o quadro inteiro, fundo branco, com margem) na pasta *Quadrado Mágico* do Drive, para você ver o desenho direto no Drive.
+
+## Enviar arquivos (PDF, Word, imagens, qualquer tipo)
+- Clique em **📎 Arquivo** (pode escolher vários), **arraste** arquivos para o quadro ou **cole** (Ctrl/⌘+V).
+- Cada arquivo é enviado para **Quadrado Mágico/Arquivos** no seu Drive (upload resumível, serve para arquivos grandes); o progresso aparece na barra de status.
+- Imagens aparecem no quadro como imagem de verdade (mova com 🖱️ e redimensione pelo quadradinho no canto inferior direito). Outros arquivos aparecem como um cartão com ícone, nome e tamanho.
+- **Duplo clique** (ou duplo toque no iPad, com a ferramenta 🖱️) abre o arquivo no Google Drive em nova aba.
+- Apagar o elemento do quadro **não apaga** o arquivo do Drive.
+- É preciso estar conectado ao Google para enviar arquivos.
+
 ## Continuar conectado
 O token de acesso (válido ~1 h) e o e-mail ficam guardados no `localStorage` (chave `quadrado-magico-token`). Ao recarregar a página o app reconecta e carrega o Drive sozinho. Se o token expirou, ele tenta renovar em silêncio (com o seu e-mail como dica); se o navegador bloquear, aparece o botão **Entrar com Google**. **Sair** apaga o token salvo e revoga o acesso.
 
