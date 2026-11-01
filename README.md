@@ -1,6 +1,6 @@
-# Quadro Livre
+# Quadrado Mágico
 
-Quadro branco infinito no estilo Excalidraw, em HTML/CSS/JavaScript puro (sem build, **sem Firebase**). O login é feito com a sua conta Google (Google Identity Services) e tudo é salvo diretamente no **seu Google Drive**, no arquivo `Quadro Livre/quadro-livre.json`.
+Quadro branco infinito no estilo Excalidraw, em HTML/CSS/JavaScript puro (sem build, **sem Firebase**). O login é feito com a sua conta Google (Google Identity Services) e tudo é salvo diretamente no **seu Google Drive**, no arquivo `Quadrado Mágico/quadrado-magico.json`.
 
 ## Recursos
 - Tela infinita com pan (espaço + arrastar, botão do meio do mouse, dois dedos, ferramenta ✋, rolagem do trackpad) e zoom (roda do mouse, pinça no iPad/trackpad, botões − / + / ⟲).
@@ -14,7 +14,7 @@ Quadro branco infinito no estilo Excalidraw, em HTML/CSS/JavaScript puro (sem bu
 
 ## 1. Configurar o Google Cloud Console (uma vez)
 1. Acesse https://console.cloud.google.com/ e entre com sua conta Google.
-2. **Criar projeto**: no seletor de projetos (topo) → *Novo projeto* → nome "Quadro Livre" → *Criar*. Selecione o projeto.
+2. **Criar projeto**: no seletor de projetos (topo) → *Novo projeto* → nome "Quadrado Mágico" → *Criar*. Selecione o projeto.
 3. **Ativar a API do Drive**: *APIs e serviços → Biblioteca* → procure **Google Drive API** → *Ativar*.
 4. **Tela de consentimento OAuth** (*APIs e serviços → Tela de consentimento OAuth* / *Google Auth Platform*):
    - Tipo de usuário: **Externo** → *Criar*.
@@ -45,19 +45,19 @@ Abra **http://localhost:8000** no navegador e clique em **Entrar com Google**.
 ⚠️ **Não abra o `index.html` com duplo clique (`file://`)**: o login do Google só funciona a partir de uma origem http(s) cadastrada nas "Origens JavaScript autorizadas". Use `localhost:8000` exatamente (não `127.0.0.1`, a menos que também cadastre essa origem).
 
 ### Usar no iPad
-`localhost` só existe no próprio computador. Para usar no iPad, hospede o app em HTTPS (ex.: GitHub Pages, abaixo) e cadastre essa origem.
+`localhost` só existe no próprio computador. Para usar no iPad, hospede o app em HTTPS (GitHub Pages: https://drthaleschateaubriand.github.io/quadrado-magico/) e cadastre essa origem.
 
-## 4. Hospedar no GitHub Pages (opcional)
+## 4. Hospedar no GitHub Pages
 1. Envie estes arquivos para um repositório no GitHub.
 2. *Settings → Pages → Build and deployment*: Source = *Deploy from a branch*, branch `main`, pasta `/ (root)` → *Save*.
-3. O site ficará em `https://SEU_USUARIO.github.io/NOME_DO_REPO/`.
-4. No Google Cloud Console, edite o Client ID e adicione em **Origens JavaScript autorizadas**: `https://SEU_USUARIO.github.io` (só a origem, sem o caminho do repositório).
+3. O site oficial fica em **https://drthaleschateaubriand.github.io/quadrado-magico/** (repositório: https://github.com/drthaleschateaubriand/quadrado-magico).
+4. No Google Cloud Console, edite o Client ID e adicione em **Origens JavaScript autorizadas**: `https://drthaleschateaubriand.github.io` (só a origem, sem `/quadrado-magico/` e sem barra no final). Mantenha também `http://localhost:8000` para testes locais.
 5. Espere alguns minutos para a alteração propagar.
 
 O Client ID não é segredo (ele aparece no navegador de qualquer forma), então pode ficar no repositório público. Nunca coloque client secret ou tokens no código.
 
 ## Como funciona o salvamento
-- No login, o app procura (ou cria) a pasta **Quadro Livre** e o arquivo **quadro-livre.json** e carrega o último estado. Se o backup local for mais recente (ex.: você editou sem login), ele é mantido e enviado ao Drive.
+- No login, o app procura (ou cria) a pasta **Quadrado Mágico** e o arquivo **quadrado-magico.json** e carrega o último estado. Se o backup local for mais recente (ex.: você editou sem login), ele é mantido e enviado ao Drive.
 - Cada alteração agenda um salvamento 2 s depois da última mudança (debounce).
 - Quando o token de acesso expira (~1 h), o app pede um novo automaticamente (pode aparecer um pop-up rápido do Google; permita pop-ups para o site).
 

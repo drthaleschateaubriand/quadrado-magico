@@ -2,9 +2,9 @@
 // Cole aqui o seu Client ID OAuth (tipo "Aplicativo da Web") do Google Cloud Console.
 const CLIENT_ID = 'COLE_SEU_CLIENT_ID_AQUI.apps.googleusercontent.com';
 const SCOPE = 'https://www.googleapis.com/auth/drive.file';
-const FOLDER_NAME = 'Quadro Livre';
-const FILE_NAME = 'quadro-livre.json';
-const LS_KEY = 'quadro-livre-backup';
+const FOLDER_NAME = 'Quadrado Mágico';
+const FILE_NAME = 'quadrado-magico.json';
+const LS_KEY = 'quadrado-magico-backup';
 const SAVE_DEBOUNCE_MS = 2000;
 
 // ===== Estado =====
@@ -367,7 +367,7 @@ window.addEventListener('keyup', e => { if (e.code === 'Space') { spaceDown = fa
 
 // ===== Persistência =====
 function serialize() {
-  return { app: 'quadro-livre', version: 1, savedAt: new Date().toISOString(), viewport: { ...view }, elements };
+  return { app: 'quadrado-magico', version: 1, savedAt: new Date().toISOString(), viewport: { ...view }, elements };
 }
 function loadState(data) {
   if (!data || !Array.isArray(data.elements)) return false;
@@ -402,7 +402,7 @@ function initGis() {
       const waiters = tokenWaiters; tokenWaiters = [];
       if (resp.error) { setStatus('error', 'Erro no login'); waiters.forEach(w => w.reject(resp)); return; }
       accessToken = resp.access_token; tokenExpiry = Date.now() + (resp.expires_in - 60) * 1000;
-      localStorage.setItem('quadro-livre-logged', '1');
+      localStorage.setItem('quadrado-magico-logged', '1');
       waiters.forEach(w => w.resolve(accessToken));
     },
     error_callback: err => { const w = tokenWaiters; tokenWaiters = []; setStatus('error', 'Erro no login'); w.forEach(x => x.reject(err)); }
@@ -443,7 +443,7 @@ async function findFile() {
   return r.files && r.files.length ? r.files[0].id : null;
 }
 async function createFile(json) {
-  const boundary = 'ql' + Date.now();
+  const boundary = 'qm' + Date.now();
   const meta = { name: FILE_NAME, mimeType: 'application/json', parents: [folderId] };
   const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${json}\r\n--${boundary}--`;
   const r = await (await driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
@@ -490,7 +490,7 @@ async function loadFromDrive() {
 }
 async function login() {
   try {
-    await requestToken(localStorage.getItem('quadro-livre-logged') ? '' : 'consent');
+    await requestToken(localStorage.getItem('quadrado-magico-logged') ? '' : 'consent');
     $('loginBtn').classList.add('hidden'); $('logoutBtn').classList.remove('hidden'); $('saveBtn').disabled = false;
     await loadFromDrive();
   } catch (e) { console.error(e); setStatus('error', 'Erro no login'); }
@@ -498,7 +498,7 @@ async function login() {
 function logout() {
   if (accessToken && window.google) google.accounts.oauth2.revoke(accessToken, () => {});
   accessToken = null; tokenExpiry = 0; folderId = fileId = null;
-  localStorage.removeItem('quadro-livre-logged');
+  localStorage.removeItem('quadrado-magico-logged');
   $('loginBtn').classList.remove('hidden'); $('logoutBtn').classList.add('hidden'); $('saveBtn').disabled = true;
   setStatus('off', 'Não conectado');
 }
@@ -511,4 +511,4 @@ try { loadState(JSON.parse(localStorage.getItem(LS_KEY) || 'null')); } catch (e)
 setTool('pen'); resize(); initGis();
 if (location.protocol === 'file:') setStatus('error', 'Abra via http://localhost:8000');
 // Exposto para testes automatizados
-window.__quadro = { get elements() { return elements; }, get view() { return view; }, undo, redo, saveNow, setTool, setToken: (t) => { accessToken = t; tokenExpiry = Date.now() + 3600e3; } };
+window.__quadrado = { get elements() { return elements; }, get view() { return view; }, undo, redo, saveNow, setTool, setToken: (t) => { accessToken = t; tokenExpiry = Date.now() + 3600e3; } };
