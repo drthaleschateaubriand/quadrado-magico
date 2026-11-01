@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Quadro Livre</title>
+<link rel="stylesheet" href="styles.css">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+<canvas id="board"></canvas>
+<textarea id="textEditor" class="hidden" placeholder="Digite..."></textarea>
+<div id="toolbar" class="panel">
+  <button data-tool="select" title="Selecionar/mover (V)">🖱️</button>
+  <button data-tool="pen" title="Caneta (P)">✏️</button>
+  <button data-tool="rect" title="Retângulo (R)">▭</button>
+  <button data-tool="ellipse" title="Elipse (O)">◯</button>
+  <button data-tool="line" title="Linha (L)">╱</button>
+  <button data-tool="arrow" title="Seta (A)">➝</button>
+  <button data-tool="text" title="Texto (T)">T</button>
+  <button data-tool="eraser" title="Borracha (E)">🧽</button>
+  <button data-tool="hand" title="Mover tela (H)">✋</button>
+</div>
+<div id="stylebar" class="panel">
+  <label>Traço <input type="color" id="strokeColor" value="#1e1e1e"></label>
+  <label><input type="checkbox" id="fillOn"> Preench. <input type="color" id="fillColor" value="#a5d8ff"></label>
+  <label>Espessura <input type="range" id="strokeWidth" min="1" max="20" value="3"></label>
+  <button id="undoBtn" title="Desfazer (Ctrl+Z)">↶</button>
+  <button id="redoBtn" title="Refazer (Ctrl+Shift+Z)">↷</button>
+  <button id="deleteBtn" title="Excluir seleção (Del)">🗑️</button>
+</div>
+<div id="zoombar" class="panel">
+  <button id="zoomOut">−</button><span id="zoomLabel">100%</span><button id="zoomIn">+</button><button id="zoomReset" title="Redefinir">⟲</button>
+</div>
+<div id="syncbar" class="panel">
+  <span id="status" class="st-off">Não conectado</span>
+  <button id="loginBtn">Entrar com Google</button>
+  <button id="saveBtn" disabled>Salvar agora</button>
+  <button id="logoutBtn" class="hidden">Sair</button>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
