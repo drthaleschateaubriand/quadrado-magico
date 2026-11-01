@@ -13,7 +13,7 @@ let ctx = canvas.getContext('2d');
 let elements = [];
 let view = { x: 0, y: 0, zoom: 1 };
 let tool = 'pen';
-let style = { stroke: '#1e1e1e', fill: '#a5d8ff', fillOn: false, width: 3 };
+let style = { stroke: '#1e1e1e', fill: '#a5d8ff', fillOn: false, width: 3, dash: false };
 let selectedId = null;
 let undoStack = [], redoStack = [];
 let lastTap = {};
@@ -52,7 +52,7 @@ function bounds(el) {
 }
 
 function drawEl(el) {
-  ctx.strokeStyle = el.stroke; ctx.lineWidth = el.width; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.strokeStyle = el.stroke; ctx.lineWidth = el.width; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.setLineDash(el.dash ? [el.width * 3, el.width * 2.5] : []);
   ctx.fillStyle = el.fill;
   ctx.beginPath();
   switch (el.type) {
@@ -99,8 +99,9 @@ function drawEl(el) {
 }
 
 function drawGrid() {
-  const step = 40 * view.zoom; if (step < 8) return;
-  ctx.fillStyle = '#d0d0d0';
+  if (window.QM_GRID === false) return;
+  const step = (window.QM_GRID_STEP || 40) * view.zoom; if (step < 8) return;
+  ctx.fillStyle = window.QM_GRID_COLOR || '#d0d0d0';
   const ox = ((view.x % step) + step) % step, oy = ((view.y % step) + step) % step;
   for (let x = ox; x < innerWidth; x += step) for (let y = oy; y < innerHeight; y += step) ctx.fillRect(x - 1, y - 1, 2, 2);
 }
@@ -212,7 +213,7 @@ canvas.addEventListener('pointerdown', e => {
   const w = toWorld(e.clientX, e.clientY);
   if (e.button === 1 || spaceDown || tool === 'hand') { drag = { kind: 'pan', sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y }; return; }
   if (e.button !== 0) return;
-  const base = { id: uid(), stroke: style.stroke, fill: style.fill, fillOn: style.fillOn, width: style.width };
+  const base = { id: uid(), stroke: style.stroke, fill: style.fill, fillOn: style.fillOn, width: style.width, dash: style.dash || undefined };
   switch (tool) {
     case 'pen': current = { ...base, type: 'pen', points: [[w.x, w.y]] }; break;
     case 'rect': case 'ellipse': case 'line': case 'arrow':
@@ -418,6 +419,8 @@ $('strokeColor').addEventListener('change', e => { style.stroke = e.target.value
 $('fillColor').addEventListener('change', e => { style.fill = e.target.value; applyStyleToSelection(el => el.fill = style.fill); });
 $('fillOn').addEventListener('change', e => { style.fillOn = e.target.checked; applyStyleToSelection(el => el.fillOn = style.fillOn); });
 $('strokeWidth').addEventListener('change', e => { style.width = +e.target.value; applyStyleToSelection(el => el.width = style.width); });
+$('dashOn') && $('dashOn').addEventListener('change', e => { style.dash = e.target.checked; applyStyleToSelection(el => el.dash = style.dash || undefined); });
+window.QMRender = () => render();
 document.querySelectorAll('#stylebar input').forEach(i => i.addEventListener('change', () => i.blur()));
 $('openBtn').onclick = () => openFileEl(selectedFile()); $('undoBtn').onclick = undo; $('redoBtn').onclick = redo; $('deleteBtn').onclick = () => selectedEls().length ? deleteSelected() : clearBoard();
 $('zoomIn').onclick = () => zoomAt(innerWidth / 2, innerHeight / 2, 1.2);
