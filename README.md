@@ -88,3 +88,6 @@ O token de acesso (válido ~1 h) e o e-mail ficam guardados no `localStorage` (c
 - **Shift + arrastar** no vazio seleciona vários elementos; arraste um deles para mover o grupo.
 - Toque em um cartão de arquivo seleciona; toque duplo (ou clique duplo) abre no Drive.
 - Nas ferramentas de desenho, dois dedos continuam movendo e dando zoom.
+
+## Arquivos abertos direto no quadro
+Cada arquivo enviado aparece já aberto dentro do cartão no quadro: PDF (páginas com ◀ ▶, renderizado com PDF.js — funciona no iPad), imagem, vídeo, áudio, Word (.docx), Excel/CSV e textos. Arraste pelo título para mover, puxe o canto inferior direito para redimensionar, e use **⤢ Abrir** (ou clique duplo no título) para tela cheia. Só os cartões visíveis na tela são baixados. Se aparecer "Conecte o Google", clique em **Entrar com Google** uma vez.

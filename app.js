@@ -123,7 +123,7 @@ function render() {
       const X1 = b.x1 - m, Y1 = b.y1 - m, X2 = b.x2 + m, Y2 = b.y2 + m;
       ctx.strokeRect(X1, Y1, X2 - X1, Y2 - Y1);
       ctx.setLineDash([]); ctx.fillStyle = '#fff';
-      const corners = sel.type === 'file' && sel.isImage ? [[b.x2, b.y2]] : [[X1, Y1], [X2, Y1], [X1, Y2], [X2, Y2]];
+      const corners = sel.type === 'file' ? [[b.x2, b.y2]] : [[X1, Y1], [X2, Y1], [X1, Y2], [X2, Y2]];
       for (const [cx, cy] of corners) { ctx.fillRect(cx - h / 2, cy - h / 2, h, h); ctx.strokeRect(cx - h / 2, cy - h / 2, h, h); }
       ctx.restore();
     }
@@ -132,6 +132,7 @@ function render() {
       ctx.save(); ctx.fillStyle = 'rgba(77,171,247,.1)'; ctx.strokeStyle = '#4dabf7'; ctx.lineWidth = 1 / view.zoom;
       ctx.fillRect(x, y, Math.abs(drag.b.x - drag.a.x), Math.abs(drag.b.y - drag.a.y)); ctx.strokeRect(x, y, Math.abs(drag.b.x - drag.a.x), Math.abs(drag.b.y - drag.a.y)); ctx.restore();
     }
+    if (window.QMInline) QMInline.sync(elements, view, { interactive: tool === 'select' && !spaceDown && !drag, selected: new Set(selectedEls().map(e => e.id)) });
     document.getElementById('zoomLabel').textContent = Math.round(view.zoom * 100) + '%';
   });
 }
@@ -228,8 +229,8 @@ canvas.addEventListener('pointerdown', e => {
     case 'eraser': drag = { kind: 'erase', erased: false }; eraseAt(w); break;
     case 'select': {
       const cur = elements.find(x => x.id === selectedId), hs = (e.pointerType === 'mouse' ? 12 : 20) / view.zoom;
-      if (cur && cur.type === 'file' && cur.isImage && Math.abs(w.x - (cur.x + cur.w)) < hs && Math.abs(w.y - (cur.y + cur.h)) < hs) {
-        drag = { kind: 'resize', el: cur, moved: false, ratio: cur.h / cur.w }; break;
+      if (cur && cur.type === 'file' && Math.abs(w.x - (cur.x + cur.w)) < hs && Math.abs(w.y - (cur.y + cur.h)) < hs) {
+        drag = { kind: 'resize', el: cur, moved: false, ratio: cur.isImage ? cur.h / cur.w : 0 }; break;
       }
       const t = pickAt(w, e.pointerType);
       if (!t) {
@@ -279,7 +280,9 @@ canvas.addEventListener('pointermove', e => {
   if (drag && drag.kind === 'erase') { eraseAt(w); return; }
   if (drag && drag.kind === 'resize') {
     if (!drag.moved) { pushHistory(); drag.moved = true; }
-    drag.el.w = Math.max(20, w.x - drag.el.x); drag.el.h = drag.el.w * drag.ratio; render(); return;
+    if (drag.ratio) { drag.el.w = Math.max(20, w.x - drag.el.x); drag.el.h = drag.el.w * drag.ratio; }
+    else { drag.el.w = Math.max(200, w.x - drag.el.x); drag.el.h = Math.max(120, w.y - drag.el.y); }
+    render(); return;
   }
   if (drag && drag.kind === 'move') {
     if (!drag.moved) { pushHistory(); drag.moved = true; }
@@ -325,13 +328,14 @@ canvas.addEventListener('mousedown', e => e.preventDefault()); // mantém o foco
 canvas.addEventListener('pointerup', endPointer);
 canvas.addEventListener('pointercancel', endPointer);
 
-canvas.addEventListener('wheel', e => {
+canvas.addEventListener('wheel', onWheel, { passive: false });
+function onWheel(e) {
   e.preventDefault();
   if (e.ctrlKey || e.metaKey) zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.01)); // pinça do trackpad
   else if (e.shiftKey && !e.deltaX) { view.x -= e.deltaY; render(); scheduleSave(false); }
   else if (Math.abs(e.deltaX) > 0 || e.deltaMode === 0 && Math.abs(e.deltaY) < 50 && !Number.isInteger(e.deltaY)) { view.x -= e.deltaX; view.y -= e.deltaY; render(); scheduleSave(false); } // rolagem de trackpad = pan
   else zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015));
-}, { passive: false });
+}
 // Safari (gestos de trackpad no Mac)
 let gestureZoom = 1;
 window.addEventListener('gesturestart', e => { e.preventDefault(); gestureZoom = 1; });
@@ -411,7 +415,7 @@ $('zoomOut').onclick = () => zoomAt(innerWidth / 2, innerHeight / 2, 1 / 1.2);
 $('zoomReset').onclick = () => { view = { x: 0, y: 0, zoom: 1 }; render(); scheduleSave(false); };
 
 window.addEventListener('keydown', e => {
-  if (editing || e.target.tagName === 'INPUT') return;
+  if (editing || e.target.tagName === 'INPUT' || QMViewer.isOpen && QMViewer.isOpen() || e.target.closest && e.target.closest('.qm-card,#viewer')) return;
   const mod = e.metaKey || e.ctrlKey;
   if (e.code === 'Space') { spaceDown = true; canvas.style.cursor = 'grab'; e.preventDefault(); return; }
   if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
@@ -433,6 +437,7 @@ function loadState(data) {
   elements = data.elements.filter(e => !e.uploading); if (data.viewport) view = { ...view, ...data.viewport };
   undoStack = []; redoStack = []; selectedId = null;
   if (migrateDataUrlTexts()) { saveLocal(); setTimeout(uploadInlineFiles, 0); }
+  upgradeCards();
   render(); return true;
 }
 function saveLocal() { try { localStorage.setItem(LS_KEY, JSON.stringify(serialize())); } catch (e) { console.warn(e); } }
@@ -583,7 +588,7 @@ async function fetchEmail() {
 async function afterConnect() {
   showConnected(true);
   await loadFromDrive();
-  retryImages();
+  retryImages(); render();
   uploadInlineFiles();
   fetchEmail();
 }
@@ -687,23 +692,36 @@ function drawFileEl(el) {
   ctx.save();
   roundRect(el.x, el.y, el.w, el.h, 10); ctx.fillStyle = '#fff'; ctx.fill();
   ctx.strokeStyle = '#adb5bd'; ctx.lineWidth = 1.5; ctx.stroke();
-  ctx.textBaseline = 'middle'; ctx.font = '30px sans-serif'; ctx.fillStyle = '#000';
-  ctx.fillText(fileIcon(el.mimeType || '', el.name), el.x + 12, el.y + el.h / 2);
-  ctx.font = '600 14px sans-serif'; ctx.fillStyle = '#212529';
-  let name = el.name; const maxW = el.w - 70;
+  ctx.textBaseline = 'middle'; ctx.font = '600 14px sans-serif'; ctx.fillStyle = '#212529';
+  let name = fileIcon(el.mimeType || '', el.name) + ' ' + el.name; const maxW = el.w - 20;
   while (ctx.measureText(name).width > maxW && name.length > 4) name = name.slice(0, -4) + '…';
-  ctx.fillText(name, el.x + 58, el.y + el.h / 2 - 10);
+  ctx.fillText(name, el.x + 10, el.y + 16);
   ctx.font = '12px sans-serif'; ctx.fillStyle = '#868e96';
-  ctx.fillText(el.uploading ? 'Enviando…' : fmtSize(el.size) + ' · clique 2x para abrir', el.x + 58, el.y + el.h / 2 + 11);
+  ctx.fillText(el.uploading ? 'Enviando…' : fmtSize(el.size), el.x + 10, el.y + el.h / 2);
   ctx.restore();
 }
 // Abre o arquivo DENTRO do app (visualizador), nunca no Google Drive.
+const hasToken = () => !!(accessToken && Date.now() < tokenExpiry);
+const refreshToken = async () => { accessToken = null; tokenExpiry = 0; clearStoredToken(true); await requestToken('', 15000); };
+async function getTokenNoPopup() { if (hasToken()) return accessToken; const e = new Error('Conecte o Google para ver este arquivo (botão "Entrar com Google").'); e.needLogin = true; throw e; }
 function openFileEl(el) {
   if (!el || el.type !== 'file') return;
-  return QMViewer.open(el, {
-    getToken,
-    refresh: async () => { accessToken = null; tokenExpiry = 0; clearStoredToken(true); await requestToken('', 15000); }
-  });
+  const needDrive = el.fileId && !QMViewer.cache.has(el.fileId);
+  const opts = { getToken: getTokenNoPopup, refresh: refreshToken, login: async () => { await login(); } };
+  if (needDrive && !hasToken() && tokenClient) { // ainda no gesto do usuário: pede o login antes de abrir
+    const p = login().then(() => QMViewer.open(el, opts)); return p;
+  }
+  return QMViewer.open(el, opts);
+}
+// Tamanho padrão dos cartões de arquivo com pré-visualização
+function defaultCardSize(mime, name) {
+  const k = QMViewer.detectKind(mime, name);
+  if (k === 'audio') return { w: 380, h: 170 };
+  if (k === 'other') return { w: 300, h: 150 };
+  return { w: 480, h: 360 };
+}
+function upgradeCards() {
+  for (const e of elements) if (e.type === 'file' && !e.isImage && e.w === 260 && e.h === 72) Object.assign(e, defaultCardSize(e.mimeType, e.name));
 }
 function selectedFile() { const t = selectedId && elements.find(e => e.id === selectedId); return t && t.type === 'file' && !multiSel.length ? t : null; }
 function updateOpenBtn() { const b = document.getElementById('openBtn'); if (b) b.classList.toggle('hidden', !selectedFile()); }
@@ -715,7 +733,7 @@ function migrateDataUrlTexts() {
     if (e.type !== 'text' || !QMViewer.isDataUrl(e.text)) return e;
     n++;
     let d; try { d = QMViewer.dataUrlToBlob(e.text); } catch (err) { return e; }
-    return { id: e.id, type: 'file', x: e.x, y: e.y, w: 260, h: 72, fileId: null, name: d.name, mimeType: d.mime, size: d.blob.size,
+    return { id: e.id, type: 'file', x: e.x, y: e.y, ...defaultCardSize(d.mime, d.name), fileId: null, name: d.name, mimeType: d.mime, size: d.blob.size,
       webViewLink: null, isImage: false, dataUrl: e.text.trim(), stroke: e.stroke, fill: e.fill, fillOn: false, width: 1 };
   });
   return n;
@@ -724,8 +742,8 @@ function addDataUrl(text, screenPt) {
   let f; try { f = dataUrlToFile(text); } catch (e) { setStatus('error', 'Conteúdo inválido'); return; }
   if (accessToken || tokenExpiry) return uploadFiles([f], screenPt);
   const c = screenPt ? toWorld(screenPt.x, screenPt.y) : toWorld(innerWidth / 2, innerHeight / 2);
-  pushHistory();
-  elements.push({ id: uid(), type: 'file', x: c.x - 130, y: c.y - 36, w: 260, h: 72, fileId: null, name: f.name, mimeType: f.type, size: f.size,
+  pushHistory(); const sz = defaultCardSize(f.type, f.name);
+  elements.push({ id: uid(), type: 'file', x: c.x - sz.w / 2, y: c.y - sz.h / 2, ...sz, fileId: null, name: f.name, mimeType: f.type, size: f.size,
     webViewLink: null, isImage: false, dataUrl: text.trim(), stroke: style.stroke, fill: style.fill, fillOn: false, width: 1 });
   changed();
 }
@@ -737,8 +755,8 @@ async function uploadInlineFiles() {
     for (const el of elements.filter(e => e.type === 'file' && e.dataUrl && !e.fileId)) {
       try {
         const parent = await ensureFilesFolder();
-        const res = await resumableUpload(dataUrlToFile(el.dataUrl), parent, () => {});
-        el.fileId = res.id; el.webViewLink = res.webViewLink || null; el.mimeType = res.mimeType || el.mimeType; delete el.dataUrl;
+        const blob = dataUrlToFile(el.dataUrl), res = await resumableUpload(blob, parent, () => {});
+        QMViewer.cache.set(res.id, blob); el.fileId = res.id; el.webViewLink = res.webViewLink || null; el.mimeType = res.mimeType || el.mimeType; delete el.dataUrl;
         changed();
       } catch (e) { console.error(e); }
     }
@@ -802,7 +820,7 @@ async function uploadFiles(files, screenPt) {
   let offset = 0;
   for (const file of files) {
     const isImage = /^image\/(png|jpe?g|gif|webp|bmp|svg\+xml|avif)$/.test(file.type);
-    let w = 260, h = 72, info = null;
+    let { w, h } = defaultCardSize(file.type, file.name), info = null;
     if (isImage) {
       info = await imageSize(file);
       if (info) { const sc = Math.min(1, 400 / Math.max(info.w, info.h)); w = Math.max(20, info.w * sc); h = Math.max(20, info.h * sc); }
@@ -819,7 +837,7 @@ async function uploadFiles(files, screenPt) {
     try {
       const parent = await ensureFilesFolder();
       const res = await resumableUpload(file, parent, p => setStatus('saving', `Enviando ${el.name} ${Math.round(p * 100)}%`));
-      el.fileId = res.id; el.webViewLink = res.webViewLink || null; el.mimeType = res.mimeType || el.mimeType; el.size = +res.size || el.size;
+      QMViewer.cache.set(res.id, file); el.fileId = res.id; el.webViewLink = res.webViewLink || null; el.mimeType = res.mimeType || el.mimeType; el.size = +res.size || el.size;
       if (el.isImage && info) imgCache.set(res.id, { img: info.img, status: 'ok' });
       delete el.uploading;
       // atualiza também os snapshots de desfazer que contêm este elemento
@@ -903,7 +921,9 @@ window.addEventListener('paste', e => {
 // ===== Início =====
 window.addEventListener('resize', resize);
 try { loadState(JSON.parse(localStorage.getItem(LS_KEY) || 'null')); } catch (e) {}
+QMInline.init({ open: openFileEl, select: el => { if (tool !== 'select') return; commitText(); selectedId = el.id; multiSel = []; render(); }, wheel: onWheel,
+  hasToken, getToken: getTokenNoPopup, refresh: refreshToken, login, rerender: render, zoom: () => view.zoom });
 setTool('select'); resize(); initGis(); autoLogin();
 if (location.protocol === 'file:') setStatus('error', 'Abra via http://localhost:8000');
 // Exposto para testes automatizados
-window.__quadrado = { openFileEl, migrateDataUrlTexts, loadState, get elements() { return elements; }, get view() { return view; }, undo, redo, saveNow, setTool, setToken: (t) => { accessToken = t; tokenExpiry = Date.now() + 3600e3; } };
+window.__quadrado = { openFileEl, migrateDataUrlTexts, loadState, get elements() { return elements; }, get view() { return view; }, undo, redo, saveNow, setTool, render, QMInline, setToken: (t) => { accessToken = t; tokenExpiry = Date.now() + 3600e3; render(); } };

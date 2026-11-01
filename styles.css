@@ -43,3 +43,33 @@ label{display:flex;align-items:center;gap:3px}
 .vw-icon { font-size: 64px; }
 .vw-spin { width: 44px; height: 44px; border: 4px solid #dee2e6; border-top-color: #4dabf7; border-radius: 50%; animation: vwspin 1s linear infinite; margin: 0 auto 12px; }
 @keyframes vwspin { to { transform: rotate(360deg); } }
+.vw-pdf { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 16px; background: #e9ecef; min-height: 100%; }
+.vw-page { background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.25); }
+
+/* Pré-visualização dentro do quadro */
+#qmLayer { position: fixed; inset: 0; overflow: hidden; pointer-events: none; z-index: 5; }
+.qm-card { position: absolute; left: 0; top: 0; transform-origin: 0 0; background: #fff; border: 1.5px solid #adb5bd; border-radius: 10px; display: flex; flex-direction: column; overflow: hidden; pointer-events: none; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+.qm-card.qm-sel { border-color: #4dabf7; }
+.qm-head { height: 30px; flex: none; display: flex; align-items: center; gap: 6px; padding: 0 4px 0 10px; background: #f8f9fa; border-bottom: 1px solid #dee2e6; cursor: move; }
+.qm-name { flex: 1; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #212529; }
+.qm-open { pointer-events: auto; height: 24px; min-width: 0; font-size: 12px; padding: 0 8px; border: 1px solid #ced4da; background: #fff; }
+.qm-body { flex: 1; min-height: 0; display: flex; flex-direction: column; pointer-events: auto; position: relative; background: #fff; -webkit-user-select: text; user-select: text; }
+.qm-foot { height: 12px; flex: none; }
+#qmLayer.qm-passive .qm-body, #qmLayer.qm-passive .qm-open { pointer-events: none; }
+.qm-msg { margin: auto; text-align: center; color: #495057; font-size: 13px; padding: 10px; }
+.qm-ico { font-size: 40px; }
+.qm-btn { margin-top: 8px; font-size: 13px; height: 32px; border: 1px solid #ced4da; background: #f8f9fa; }
+.qm-err { display: inline-block; max-width: 100%; }
+.qm-spin { width: 30px; height: 30px; border: 3px solid #dee2e6; border-top-color: #4dabf7; border-radius: 50%; animation: vwspin 1s linear infinite; margin: 0 auto 8px; }
+.qm-scroll { flex: 1; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; touch-action: pan-x pan-y; }
+.qm-img, .qm-media { flex: 1; min-height: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+.qm-img { background: #fff; }
+.qm-pdfwrap { background: #e9ecef; text-align: center; padding: 6px 0; }
+.qm-page { background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+.qm-nav { flex: none; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 3px; border-top: 1px solid #dee2e6; font-size: 13px; }
+.qm-nav button { height: 26px; min-width: 32px; font-size: 13px; }
+.qm-nav.qm-one { display: none; }
+.qm-pre { margin: 0; padding: 8px 10px; white-space: pre-wrap; word-break: break-word; font-size: 12px; }
+.qm-docx .vw-doc { padding: 10px 16px; font-size: 13px; }
+.qm-sheet .vw-sheet { padding: 4px; }
+.qm-sheet .vw-sheet table { font-size: 12px; }

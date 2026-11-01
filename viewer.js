@@ -41,6 +41,28 @@
     if (!libs[src]) libs[src] = new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('Falha ao carregar ' + src)); document.head.appendChild(s); });
     return libs[src];
   }
+  const PDFJS = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.min.js';
+  async function pdfLib() {
+    await loadScript(PDFJS); const L = root.pdfjsLib;
+    if (!L.GlobalWorkerOptions.workerSrc) L.GlobalWorkerOptions.workerSrc = PDFJS.replace('pdf.min.js', 'pdf.worker.min.js');
+    return L;
+  }
+  const pdfDocs = new WeakMap();
+  function openPdf(blob) {
+    if (!pdfDocs.has(blob)) pdfDocs.set(blob, (async () => { const L = await pdfLib(); return L.getDocument({ data: new Uint8Array(await blob.arrayBuffer()), isEvalSupported: false }).promise; })());
+    return pdfDocs.get(blob);
+  }
+  // Desenha a página n do PDF num <canvas> com largura cssW (px); res = fator extra de nitidez
+  async function renderPdfPage(doc, n, cv, cssW, res) {
+    const pg = await doc.getPage(n), v1 = pg.getViewport({ scale: 1 });
+    const k = Math.min(3, (root.devicePixelRatio || 1) * (res || 1)), sc = cssW / v1.width, v = pg.getViewport({ scale: sc * k });
+    const max = 4096 / Math.max(v.width, v.height), vv = max < 1 ? pg.getViewport({ scale: sc * k * max }) : v;
+    cv.width = Math.floor(vv.width); cv.height = Math.floor(vv.height);
+    cv.style.width = cssW + 'px'; cv.style.height = (cssW * v1.height / v1.width) + 'px';
+    if (cv._task) { try { cv._task.cancel(); } catch (e) {} }
+    cv._task = pg.render({ canvasContext: cv.getContext('2d'), viewport: vv });
+    try { await cv._task.promise; } catch (e) { if (e && e.name === 'RenderingCancelledException') return; throw e; }
+  }
   let modal, body, title, dlBtn, curUrl = null, curName = '', token = 0;
   function build() {
     modal = document.createElement('div'); modal.id = 'viewer'; modal.className = 'hidden';
@@ -57,13 +79,28 @@
   function download() { if (!curUrl) return; const a = document.createElement('a'); a.href = curUrl; a.download = curName || 'arquivo'; document.body.appendChild(a); a.click(); a.remove(); }
   function fmt(n) { return n < 1024 * 1024 ? Math.round(n / 1024) + ' KB' : (n / 1048576).toFixed(1) + ' MB'; }
   // Baixa o conteúdo com progresso; getToken/refresh vêm do app (fluxo OAuth existente).
-  async function fetchBlob(el, getToken, refresh, onProg) {
+  function driveError(st) {
+    const m = st === 404 ? 'Arquivo não encontrado no Drive desta conta. Ele pode ter sido enviado com outra conta Google ou excluído — envie o arquivo de novo.'
+      : st === 403 ? 'Sem permissão para ler este arquivo no Drive (só os arquivos enviados por este app podem ser abertos). Envie o arquivo de novo pelo botão 📎.'
+      : st === 401 ? 'Sessão do Google expirada — clique em "Entrar com Google".' : 'Erro do Google Drive (' + st + ')';
+    const e = new Error(m); e.status = st; if (st === 401) e.needLogin = true; return e;
+  }
+  const inflight = new Map();
+  function fetchBlob(el, getToken, refresh, onProg) {
+    if (el.fileId && cache.has(el.fileId)) return Promise.resolve(cache.get(el.fileId));
+    if (!el.fileId && el.dataUrl) return Promise.resolve(dataUrlToBlob(el.dataUrl).blob);
+    if (!el.fileId) return Promise.reject(new Error(el.uploading ? 'O arquivo ainda está sendo enviado…' : 'Arquivo sem conteúdo'));
+    if (inflight.has(el.fileId)) return inflight.get(el.fileId);
+    const p = fetchBlob0(el, getToken, refresh, onProg || (() => {})).finally(() => inflight.delete(el.fileId));
+    inflight.set(el.fileId, p); return p;
+  }
+  async function fetchBlob0(el, getToken, refresh, onProg) {
     if (el.fileId && cache.has(el.fileId)) return cache.get(el.fileId);
     if (!el.fileId && el.dataUrl) return dataUrlToBlob(el.dataUrl).blob;
     const url = `https://www.googleapis.com/drive/v3/files/${el.fileId}?alt=media`;
     let res = await fetch(url, { headers: { Authorization: 'Bearer ' + await getToken() } });
     if (res.status === 401 && refresh) { await refresh(); res = await fetch(url, { headers: { Authorization: 'Bearer ' + await getToken() } }); }
-    if (!res.ok) throw new Error('Drive ' + res.status);
+    if (!res.ok) throw driveError(res.status);
     const total = +res.headers.get('Content-Length') || el.size || 0;
     let blob;
     if (res.body && res.body.getReader) {
@@ -78,10 +115,22 @@
   // Retorna a tag usada (para testes) e preenche o corpo do modal.
   async function renderInto(container, blob, kind, url, name) {
     switch (kind) {
-      case 'pdf': container.innerHTML = `<iframe class="vw-frame" title="${esc(name)}"></iframe>`; container.firstChild.src = url; return 'iframe';
+      case 'pdf': {
+        const doc = await openPdf(blob);
+        container.innerHTML = '<div class="vw-pdf"></div>'; const d = container.firstChild;
+        const W = Math.max(200, Math.min(1000, (body && body.clientWidth || 800) - 32));
+        const pg1 = await doc.getPage(1), v1 = pg1.getViewport({ scale: 1 });
+        const io = 'IntersectionObserver' in root ? new IntersectionObserver(es => es.forEach(en => { if (en.isIntersecting) { io.unobserve(en.target); renderPdfPage(doc, +en.target.dataset.n, en.target, W).catch(console.error); } }), { root: null, rootMargin: '600px' }) : null;
+        for (let i = 1; i <= doc.numPages; i++) {
+          const cv = document.createElement('canvas'); cv.className = 'vw-page'; cv.dataset.n = i;
+          cv.style.width = W + 'px'; cv.style.height = (W * v1.height / v1.width) + 'px'; d.appendChild(cv);
+          if (io && i > 1) io.observe(cv); else await renderPdfPage(doc, i, cv, W);
+        }
+        return 'pdf';
+      }
       case 'image': container.innerHTML = '<img class="vw-img" alt="">'; container.firstChild.src = url; return 'img';
-      case 'audio': container.innerHTML = '<audio controls autoplay class="vw-media"></audio>'; container.firstChild.src = url; return 'audio';
-      case 'video': container.innerHTML = '<video controls autoplay playsinline class="vw-media"></video>'; container.firstChild.src = url; return 'video';
+      case 'audio': container.innerHTML = '<audio controls class="vw-media"></audio>'; container.firstChild.src = url; return 'audio';
+      case 'video': container.innerHTML = '<video controls playsinline class="vw-media"></video>'; container.firstChild.src = url; return 'video';
       case 'text': { const t = await blob.text(); container.innerHTML = '<pre class="vw-pre"></pre>'; let s = t; if (/json$/i.test(name) || blob.type.includes('json')) { try { s = JSON.stringify(JSON.parse(t), null, 2); } catch (e) {} } container.firstChild.textContent = s; return 'pre'; }
       case 'docx': {
         await loadScript('https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js');
@@ -108,7 +157,6 @@
     body.innerHTML = '<div class="vw-load"><div class="vw-spin"></div><div class="vw-prog">Carregando…</div></div>';
     const prog = body.querySelector('.vw-prog');
     try {
-      if (!el.fileId && !el.dataUrl) throw new Error(el.uploading ? 'O arquivo ainda está sendo enviado' : 'Arquivo sem conteúdo');
       const blob = await fetchBlob(el, opts.getToken, opts.refresh, (g, t) => { if (my === token) prog.textContent = t ? `Carregando… ${Math.min(100, Math.round(g / t * 100))}% (${fmt(g)} de ${fmt(t)})` : `Carregando… ${fmt(g)}`; });
       if (my !== token) return;
       curUrl = URL.createObjectURL(blob); dlBtn.disabled = false;
@@ -122,7 +170,8 @@
       console.error(e); if (my !== token) return;
       body.innerHTML = `<div class="vw-other"><div class="vw-icon">⚠️</div><p>Não foi possível abrir o arquivo.</p><p class="vw-err"></p></div>`;
       body.querySelector('.vw-err').textContent = e.message;
+      if (e.needLogin && opts.login) { const b = document.createElement('button'); b.className = 'vw-dl2'; b.textContent = '🔗 Entrar com Google'; b.onclick = async () => { await opts.login(); open(el, opts); }; body.querySelector('.vw-other').appendChild(b); }
     }
   }
-  Object.assign(QMViewer, { open, close, isOpen, renderInto, fetchBlob, cache });
+  Object.assign(QMViewer, { open, close, isOpen, renderInto, fetchBlob, cache, loadScript, openPdf, renderPdfPage, esc });
 })(typeof window !== 'undefined' ? window : globalThis);
