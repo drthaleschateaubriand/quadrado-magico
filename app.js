@@ -1086,8 +1086,17 @@ function renderTabs() {
     d.addEventListener('pointerup', cancel); d.addEventListener('pointercancel', cancel); d.addEventListener('pointerleave', cancel);
     list.appendChild(d);
   }
+  layoutTabbar();
   const a = list.querySelector('.tab.active'); if (a && a.scrollIntoView) a.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
+// Barra de abas no canto superior esquerdo, sem sobrepor a barra central
+function layoutTabbar() {
+  const tb = $('toolbar'), bar = $('tabbar'); if (!tb || !bar) return;
+  const space = tb.getBoundingClientRect().left - 10 - 10;
+  const below = space < 150; bar.classList.toggle('below', below);
+  bar.style.setProperty('--tabmax', (below ? Math.min(innerWidth - 20, 420) : space) + 'px');
+}
+addEventListener('resize', layoutTabbar); setTimeout(layoutTabbar, 0);
 let menuTab = null;
 function openTabMenu(id, anchor) {
   menuTab = id; const m = $('tabMenu'), r = anchor.getBoundingClientRect();
