@@ -61,6 +61,9 @@ O Client ID não é segredo (ele aparece no navegador de qualquer forma), então
 - Cada alteração agenda um salvamento 2 s depois da última mudança (debounce).
 - Quando o token de acesso expira (~1 h), o app pede um novo automaticamente (pode aparecer um pop-up rápido do Google; permita pop-ups para o site).
 
+## Continuar conectado
+O token de acesso (válido ~1 h) e o e-mail ficam guardados no `localStorage` (chave `quadrado-magico-token`). Ao recarregar a página o app reconecta e carrega o Drive sozinho. Se o token expirou, ele tenta renovar em silêncio (com o seu e-mail como dica); se o navegador bloquear, aparece o botão **Entrar com Google**. **Sair** apaga o token salvo e revoga o acesso.
+
 ## Limitações
 - Sem colaboração em tempo real; se o mesmo quadro estiver aberto em dois dispositivos, vence o último salvamento.
 - Um único quadro por conta (um arquivo JSON).

@@ -403,26 +403,46 @@ function initGis() {
       if (resp.error) { setStatus('error', 'Erro no login'); waiters.forEach(w => w.reject(resp)); return; }
       accessToken = resp.access_token; tokenExpiry = Date.now() + (resp.expires_in - 60) * 1000;
       localStorage.setItem('quadrado-magico-logged', '1');
+      storeToken();
       waiters.forEach(w => w.resolve(accessToken));
     },
     error_callback: err => { const w = tokenWaiters; tokenWaiters = []; setStatus('error', 'Erro no login'); w.forEach(x => x.reject(err)); }
   });
 }
-function requestToken(prompt) {
+const TOKEN_KEY = 'quadrado-magico-token';
+let userEmail = '';
+function storeToken() {
+  try { localStorage.setItem(TOKEN_KEY, JSON.stringify({ access_token: accessToken, expiry: tokenExpiry, email: userEmail })); } catch (e) {}
+}
+function readStoredToken() { try { return JSON.parse(localStorage.getItem(TOKEN_KEY) || 'null'); } catch (e) { return null; } }
+function clearStoredToken(keepEmail) {
+  const old = readStoredToken();
+  if (keepEmail && old && old.email) localStorage.setItem(TOKEN_KEY, JSON.stringify({ email: old.email }));
+  else localStorage.removeItem(TOKEN_KEY);
+}
+function requestToken(prompt, timeoutMs) {
   return new Promise((resolve, reject) => {
     if (!tokenClient) return reject(new Error('Google Identity Services não carregou'));
-    tokenWaiters.push({ resolve, reject });
-    tokenClient.requestAccessToken({ prompt });
+    let done = false, timer = null;
+    const w = {
+      resolve: t => { if (done) return; done = true; clearTimeout(timer); resolve(t); },
+      reject: e => { if (done) return; done = true; clearTimeout(timer); reject(e); }
+    };
+    tokenWaiters.push(w);
+    if (timeoutMs) timer = setTimeout(() => { tokenWaiters = tokenWaiters.filter(x => x !== w); w.reject(new Error('timeout')); }, timeoutMs);
+    const opts = { prompt };
+    if (userEmail) { opts.hint = userEmail; opts.login_hint = userEmail; }
+    tokenClient.requestAccessToken(opts);
   });
 }
 async function getToken() {
   if (accessToken && Date.now() < tokenExpiry) return accessToken;
-  return requestToken('');
+  return requestToken('', 15000);
 }
 async function driveFetch(url, opts = {}, retry = true) {
   const token = await getToken();
   const res = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: 'Bearer ' + token } });
-  if (res.status === 401 && retry) { accessToken = null; await requestToken(''); return driveFetch(url, opts, false); }
+  if (res.status === 401 && retry) { accessToken = null; tokenExpiry = 0; clearStoredToken(true); await requestToken('', 15000); return driveFetch(url, opts, false); }
   if (!res.ok) throw new Error('Drive ' + res.status + ': ' + await res.text());
   return res;
 }
@@ -488,17 +508,51 @@ async function loadFromDrive() {
     } else { await saveNow(); }
   } catch (err) { console.error(err); setStatus('error', 'Erro ao carregar'); }
 }
+function showConnected(on) {
+  $('loginBtn').classList.toggle('hidden', on); $('logoutBtn').classList.toggle('hidden', !on); $('saveBtn').disabled = !on;
+}
+async function fetchEmail() {
+  if (userEmail) return;
+  try {
+    const r = await (await driveFetch('https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)')).json();
+    userEmail = (r.user && r.user.emailAddress) || ''; storeToken();
+  } catch (e) { console.warn(e); }
+}
+async function afterConnect() {
+  showConnected(true);
+  await loadFromDrive();
+  fetchEmail();
+}
 async function login() {
   try {
     await requestToken(localStorage.getItem('quadrado-magico-logged') ? '' : 'consent');
-    $('loginBtn').classList.add('hidden'); $('logoutBtn').classList.remove('hidden'); $('saveBtn').disabled = false;
-    await loadFromDrive();
+    await afterConnect();
   } catch (e) { console.error(e); setStatus('error', 'Erro no login'); }
 }
+// Reconecta automaticamente ao recarregar a página.
+async function autoLogin() {
+  const st = readStoredToken();
+  if (st && st.email) userEmail = st.email;
+  if (st && st.access_token && st.expiry > Date.now()) {
+    accessToken = st.access_token; tokenExpiry = st.expiry;
+    try { await afterConnect(); return; } catch (e) { console.warn(e); }
+  }
+  if (!localStorage.getItem('quadrado-magico-logged')) return;
+  // Token expirado: tenta renovar em silêncio; se falhar/bloquear, mostra o botão de login.
+  const waitGis = () => new Promise(res => { const t0 = Date.now(); (function w() { if (tokenClient || Date.now() - t0 > 10000) res(); else setTimeout(w, 200); })(); });
+  await waitGis();
+  setStatus('saving', 'Reconectando…');
+  try { await requestToken('', 10000); await afterConnect(); }
+  catch (e) {
+    console.warn('Renovação silenciosa falhou', e);
+    accessToken = null; tokenExpiry = 0; showConnected(false);
+    setStatus('off', 'Não conectado — clique em Entrar');
+  }
+}
 function logout() {
-  if (accessToken && window.google) google.accounts.oauth2.revoke(accessToken, () => {});
-  accessToken = null; tokenExpiry = 0; folderId = fileId = null;
-  localStorage.removeItem('quadrado-magico-logged');
+  if (accessToken && window.google && google.accounts) google.accounts.oauth2.revoke(accessToken, () => {});
+  accessToken = null; tokenExpiry = 0; folderId = fileId = null; userEmail = '';
+  localStorage.removeItem('quadrado-magico-logged'); localStorage.removeItem(TOKEN_KEY);
   $('loginBtn').classList.remove('hidden'); $('logoutBtn').classList.add('hidden'); $('saveBtn').disabled = true;
   setStatus('off', 'Não conectado');
 }
@@ -508,7 +562,7 @@ window.addEventListener('beforeunload', e => { saveLocal(); if (dirty && accessT
 // ===== Início =====
 window.addEventListener('resize', resize);
 try { loadState(JSON.parse(localStorage.getItem(LS_KEY) || 'null')); } catch (e) {}
-setTool('pen'); resize(); initGis();
+setTool('pen'); resize(); initGis(); autoLogin();
 if (location.protocol === 'file:') setStatus('error', 'Abra via http://localhost:8000');
 // Exposto para testes automatizados
 window.__quadrado = { get elements() { return elements; }, get view() { return view; }, undo, redo, saveNow, setTool, setToken: (t) => { accessToken = t; tokenExpiry = Date.now() + 3600e3; } };
