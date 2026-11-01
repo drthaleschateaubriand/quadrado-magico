@@ -1,6 +1,6 @@
 // ===== Configuração =====
 // Cole aqui o seu Client ID OAuth (tipo "Aplicativo da Web") do Google Cloud Console.
-const CLIENT_ID = 'COLE_SEU_CLIENT_ID_AQUI.apps.googleusercontent.com';
+const CLIENT_ID = '92995866772-gakfs9r8kfiebllep3t2hsmav79cmksq.apps.googleusercontent.com';
 const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const FOLDER_NAME = 'Quadrado Mágico';
 const FILE_NAME = 'quadrado-magico.json';
