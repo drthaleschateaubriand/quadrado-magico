@@ -180,13 +180,8 @@ function pickAt(w, pointerType) {
 // ===== Histórico =====
 const snapshot = () => JSON.stringify(elements);
 function pushHistory() { undoStack.push(snapshot()); if (undoStack.length > 200) undoStack.shift(); redoStack = []; }
-function undo() { if (!undoStack.length) return; redoStack.push(snapshot()); elements = JSON.parse(undoStack.pop()); selectedId = null; multiSel = []; changed(); }
+function undo() { if (!undoStack.length) return; redoStack.push(snapshot()); elements = JSON.parse(undoStack.pop()); selectedId = null; multiSel = []; reconcileTrash(); changed(); }
 function redo() { if (!redoStack.length) return; undoStack.push(snapshot()); elements = JSON.parse(redoStack.pop()); selectedId = null; multiSel = []; changed(); }
-function deleteSelected() {
-  if (!selectedId && !multiSel.length) return; pushHistory();
-  const ids = new Set([selectedId, ...multiSel]);
-  elements = elements.filter(e => !ids.has(e.id)); selectedId = null; multiSel = []; changed();
-}
 function moveEl(el, dx, dy) {
   if (el.type === 'pen') el.points = el.points.map(p => [p[0] + dx, p[1] + dy]);
   else if (el.type === 'text' || el.type === 'file') { el.x += dx; el.y += dy; }
@@ -256,6 +251,7 @@ canvas.addEventListener('pointerdown', e => {
 
 function eraseAt(w) {
   const t = topHit(w.x, w.y);
+  if (t && t.type === 'file') { setStatus('off', 'Para excluir arquivos use 🗑️ (vão para a Lixeira)'); return; }
   if (t) {
     if (!drag.erased) { pushHistory(); drag.erased = true; }
     elements = elements.filter(e => e !== t); if (selectedId === t.id) selectedId = null; render();
@@ -423,13 +419,13 @@ $('fillColor').addEventListener('change', e => { style.fill = e.target.value; ap
 $('fillOn').addEventListener('change', e => { style.fillOn = e.target.checked; applyStyleToSelection(el => el.fillOn = style.fillOn); });
 $('strokeWidth').addEventListener('change', e => { style.width = +e.target.value; applyStyleToSelection(el => el.width = style.width); });
 document.querySelectorAll('#stylebar input').forEach(i => i.addEventListener('change', () => i.blur()));
-$('openBtn').onclick = () => openFileEl(selectedFile()); $('undoBtn').onclick = undo; $('redoBtn').onclick = redo; $('deleteBtn').onclick = deleteSelected;
+$('openBtn').onclick = () => openFileEl(selectedFile()); $('undoBtn').onclick = undo; $('redoBtn').onclick = redo; $('deleteBtn').onclick = () => selectedEls().length ? deleteSelected() : clearBoard();
 $('zoomIn').onclick = () => zoomAt(innerWidth / 2, innerHeight / 2, 1.2);
 $('zoomOut').onclick = () => zoomAt(innerWidth / 2, innerHeight / 2, 1 / 1.2);
 $('zoomReset').onclick = () => { view = { x: 0, y: 0, zoom: 1 }; render(); scheduleSave(false); };
 
 window.addEventListener('keydown', e => {
-  if (editing || e.target.tagName === 'INPUT' || QMViewer.isOpen && QMViewer.isOpen() || e.target.closest && e.target.closest('.qm-card,#viewer')) return;
+  if (editing || e.target.tagName === 'INPUT' || dialogOpen() || trashOpen() || QMViewer.isOpen && QMViewer.isOpen() || e.target.closest && e.target.closest('.qm-card,#viewer')) return;
   const mod = e.metaKey || e.ctrlKey;
   if (e.code === 'Space') { spaceDown = true; canvas.style.cursor = 'grab'; e.preventDefault(); return; }
   if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
@@ -442,33 +438,52 @@ window.addEventListener('keydown', e => {
 });
 window.addEventListener('keyup', e => { if (e.code === 'Space') { spaceDown = false; setTool(tool); } });
 
-// ===== Persistência =====
+// ===== Persistência (abas: cada aba é um quadro separado) =====
+const TABS_KEY = 'qm-tabs', BOARD_PREFIX = 'qm-board-';
+const INDEX_NAME = 'quadrado-magico-indice.json', TRASH_FOLDER = 'Lixeira', FOLDER_MIME = 'application/vnd.google-apps.folder';
+let tabsState = { tabs: [], activeId: null, trash: [], indexUpdatedAt: '' };
+let boardSavedAt = null; // momento da última edição do quadro ativo (usado no "última gravação vence")
+const activeTab = () => tabsState.tabs.find(t => t.id === tabsState.activeId) || tabsState.tabs[0];
+const tabById = id => tabsState.tabs.find(t => t.id === id);
+function saveTabsLocal() { try { localStorage.setItem(TABS_KEY, JSON.stringify(tabsState)); } catch (e) { console.warn(e); } }
+function readBoardLocal(id) { try { const d = JSON.parse(localStorage.getItem(BOARD_PREFIX + id) || 'null'); return d && Array.isArray(d.elements) ? d : null; } catch (e) { return null; } }
+function writeBoardLocal(id, data) { try { localStorage.setItem(BOARD_PREFIX + id, JSON.stringify(data)); } catch (e) { console.warn(e); } }
+function loadTabsLocal() {
+  let st = null; try { st = JSON.parse(localStorage.getItem(TABS_KEY) || 'null'); } catch (e) {}
+  if (st && Array.isArray(st.tabs) && st.tabs.length) { tabsState = { trash: [], indexUpdatedAt: '', ...st }; if (!tabById(tabsState.activeId)) tabsState.activeId = tabsState.tabs[0].id; return; }
+  // Migração: o quadro único antigo vira a aba "Quadro 1"
+  const id = uid(); let legacy = null; try { legacy = JSON.parse(localStorage.getItem(LS_KEY) || 'null'); } catch (e) {}
+  tabsState = { tabs: [{ id, name: 'Quadro 1', legacy: true }], activeId: id, trash: (st && st.trash) || [], indexUpdatedAt: '' };
+  if (legacy && Array.isArray(legacy.elements)) writeBoardLocal(id, legacy);
+  saveTabsLocal();
+}
 function serialize() {
-  return { app: 'quadrado-magico', version: 1, savedAt: new Date().toISOString(), viewport: { ...view }, elements };
+  const t = activeTab();
+  return { app: 'quadrado-magico', version: 2, tabId: t && t.id, name: t && t.name, savedAt: boardSavedAt || new Date().toISOString(), viewport: { ...view }, elements };
 }
 function loadState(data) {
   if (!data || !Array.isArray(data.elements)) return false;
-  elements = data.elements.filter(e => !e.uploading); if (data.viewport) view = { ...view, ...data.viewport };
-  undoStack = []; redoStack = []; selectedId = null;
+  elements = data.elements.filter(e => !e.uploading); view = data.viewport ? { x: 0, y: 0, zoom: 1, ...data.viewport } : { x: 0, y: 0, zoom: 1 };
+  boardSavedAt = data.savedAt || null;
+  undoStack = []; redoStack = []; selectedId = null; multiSel = [];
   if (migrateDataUrlTexts()) { saveLocal(); setTimeout(uploadInlineFiles, 0); }
   upgradeCards();
   render(); return true;
 }
-function saveLocal() { try { localStorage.setItem(LS_KEY, JSON.stringify(serialize())); } catch (e) { console.warn(e); } }
+function saveLocal() { const t = activeTab(); if (t) writeBoardLocal(t.id, serialize()); saveTabsLocal(); }
 function changed() { render(); scheduleSave(true); }
 
-let saveTimer = null, dirty = false, saving = false, saveAgain = false;
+let saveTimer = null, dirty = false;
 function scheduleSave(contentChanged) {
+  boardSavedAt = new Date().toISOString();
   saveLocal();
   dirty = true;
   if (!accessToken) return;
   clearTimeout(saveTimer);
   saveTimer = setTimeout(saveNow, SAVE_DEBOUNCE_MS);
 }
-
-function setStatus(kind, text) {
-  const s = $('status'); s.className = 'st-' + kind; s.textContent = text;
-}
+function setStatus(kind, text) { const s = $('status'); s.className = 'st-' + kind; s.textContent = text; }
+const hhmm = () => new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
 // ===== Google Identity Services + Drive API v3 =====
 let tokenClient = null, accessToken = null, tokenExpiry = 0, tokenWaiters = [];
@@ -527,70 +542,187 @@ async function driveFetch(url, opts = {}, retry = true) {
   return res;
 }
 const q = s => encodeURIComponent(s);
+const API = 'https://www.googleapis.com/drive/v3/files';
+const connected = () => !!(accessToken || tokenExpiry);
+let driveQ = Promise.resolve();
+// Todas as operações no Drive passam por esta fila (uma de cada vez, na ordem).
+function enqueue(fn) {
+  const p = driveQ.then(() => connected() ? fn() : null).catch(e => { console.error(e); setStatus('error', 'Erro ao sincronizar'); });
+  driveQ = p; return p;
+}
+const esc = s => String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+async function driveJson(url, opts) { const r = await driveFetch(url, opts); const t = await r.text(); try { return t ? JSON.parse(t) : {}; } catch (e) { return {}; } }
 async function findOrCreateFolder() {
-  const query = `name='${FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
-  const r = await (await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q(query)}&fields=files(id,name)&spaces=drive`)).json();
+  const query = `name='${FOLDER_NAME}' and mimeType='${FOLDER_MIME}' and trashed=false`;
+  const r = await driveJson(`${API}?q=${q(query)}&fields=files(id,name,appProperties)&spaces=drive`);
+  if (r.files) r.files = r.files.filter(f => !(f.appProperties && (f.appProperties.qmTab || f.appProperties.qmTrash)));
+  // a pasta principal é a que fica fora das outras pastas do app
   if (r.files && r.files.length) return r.files[0].id;
-  const c = await (await driveFetch('https://www.googleapis.com/drive/v3/files?fields=id', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' })
-  })).json();
+  return createFolder(FOLDER_NAME, null);
+}
+async function createFolder(name, parent, appProperties) {
+  const meta = { name, mimeType: FOLDER_MIME }; if (parent) meta.parents = [parent]; if (appProperties) meta.appProperties = appProperties;
+  const c = await driveJson(`${API}?fields=id`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(meta) });
+  if (!c.id) throw new Error('Drive não criou a pasta ' + name);
   return c.id;
 }
-async function findFile() {
-  const query = `name='${FILE_NAME}' and '${folderId}' in parents and trashed=false`;
-  const r = await (await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q(query)}&fields=files(id,modifiedTime)&orderBy=modifiedTime desc`)).json();
+async function listChildren(parent) {
+  const query = `'${parent}' in parents and trashed=false`;
+  const r = await driveJson(`${API}?q=${q(query)}&fields=files(id,name,mimeType,modifiedTime,appProperties)&pageSize=1000`);
+  return (r.files || []).filter(f => f && f.id);
+}
+async function findOrCreate(name, parent, mime) {
+  const query = `name='${esc(name)}' and '${parent}' in parents and trashed=false` + (mime ? ` and mimeType='${mime}'` : '');
+  const r = await driveJson(`${API}?q=${q(query)}&fields=files(id,modifiedTime)`);
   return r.files && r.files.length ? r.files[0].id : null;
 }
-async function createFile(json) {
+async function getMeta(id, fields) { return driveJson(`${API}/${id}?fields=${fields}`); }
+// Move com files.update addParents/removeParents
+async function moveFile(id, toParent, fromParents) {
+  if (!fromParents) { const m = await getMeta(id, 'parents'); fromParents = (m.parents || []).join(','); }
+  return driveJson(`${API}/${id}?addParents=${q(toParent)}${fromParents ? '&removeParents=' + q(fromParents) : ''}&fields=id,parents`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+}
+async function trashDrive(id) {
+  return driveJson(`${API}/${id}?fields=id,trashed`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trashed: true }) });
+}
+async function renameDrive(id, name) {
+  return driveJson(`${API}/${id}?fields=id,name`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+}
+async function createJsonFile(name, parent, json) {
   const boundary = 'qm' + Date.now();
-  const meta = { name: FILE_NAME, mimeType: 'application/json', parents: [folderId] };
+  const meta = { name, mimeType: 'application/json', parents: [parent] };
   const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${json}\r\n--${boundary}--`;
-  const r = await (await driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
-    method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + boundary }, body
-  })).json();
-  return r.id;
+  return driveJson('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,modifiedTime', {
+    method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + boundary }, body });
+}
+async function updateJsonFile(id, json) {
+  return driveJson(`https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=media&fields=id,modifiedTime`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: json });
+}
+async function readJson(id) { const d = await driveJson(`${API}/${id}?alt=media`); return d; }
+let trashFolderId = null, indexFileId = null;
+async function ensureRoot() { if (!folderId) folderId = await findOrCreateFolder(); return folderId; }
+async function ensureTrashFolder() {
+  await ensureRoot();
+  if (!trashFolderId) trashFolderId = await findOrCreate(TRASH_FOLDER, folderId, FOLDER_MIME) || await createFolder(TRASH_FOLDER, folderId, { qmTrash: '1' });
+  return trashFolderId;
+}
+async function ensureTabFolder(tab) {
+  await ensureRoot();
+  if (!tab.folderId) { tab.folderId = await createFolder(tab.name, folderId, { qmTab: tab.id }); delete tab.legacy; saveTabsLocal(); }
+  return tab.folderId;
+}
+// Salva o quadro de uma aba no Drive, na pasta da aba. Conflito: vence a edição mais recente (savedAt), conferindo o modifiedTime.
+async function saveBoardDrive(tabId, data) {
+  const tab = tabById(tabId) || (tabsState.trash.find(x => x.kind === 'tab' && x.tab.id === tabId) || {}).tab;
+  if (!tab) return;
+  await ensureTabFolder(tab);
+  if (!tab.fileId) tab.fileId = await findOrCreate(FILE_NAME, tab.folderId);
+  const json = JSON.stringify(data);
+  if (tab.fileId) {
+    const meta = await getMeta(tab.fileId, 'modifiedTime');
+    if (tab.modifiedTime && meta.modifiedTime && meta.modifiedTime !== tab.modifiedTime) {
+      const remote = await readJson(tab.fileId);
+      if (remote && Array.isArray(remote.elements) && remote.savedAt && data.savedAt && remote.savedAt > data.savedAt) {
+        // outro aparelho salvou depois: fica a versão dele
+        writeBoardLocal(tab.id, remote); tab.modifiedTime = meta.modifiedTime; saveTabsLocal();
+        if (tab.id === tabsState.activeId) loadState(remote);
+        setStatus('saved', 'Atualizado de outro aparelho'); return;
+      }
+    }
+    const r = await updateJsonFile(tab.fileId, json); tab.modifiedTime = r.modifiedTime || meta.modifiedTime || tab.modifiedTime;
+  } else {
+    const r = await createJsonFile(FILE_NAME, tab.folderId, json); tab.fileId = r.id || null; tab.modifiedTime = r.modifiedTime;
+  }
+  saveTabsLocal();
+  if (tab.id === tabsState.activeId) { try { await uploadBoardPng(tab); } catch (e) { console.error('PNG', e); } }
+}
+// Carrega do Drive o quadro de uma aba (se for mais novo que o local)
+async function loadTabFromDrive(tab) {
+  if (!tab.folderId) return saveBoardDrive(tab.id, tab.id === tabsState.activeId ? serialize() : (readBoardLocal(tab.id) || emptyBoard()));
+  if (!tab.fileId) tab.fileId = await findOrCreate(FILE_NAME, tab.folderId);
+  const isActive = () => tab.id === tabsState.activeId;
+  const local = isActive() ? serialize() : readBoardLocal(tab.id);
+  if (!tab.fileId) return saveBoardDrive(tab.id, local || emptyBoard());
+  const meta = await getMeta(tab.fileId, 'modifiedTime');
+  const data = await readJson(tab.fileId);
+  if (!data || !Array.isArray(data.elements)) return saveBoardDrive(tab.id, local || emptyBoard());
+  if (local && local.savedAt && data.savedAt && local.savedAt > data.savedAt) { tab.modifiedTime = meta.modifiedTime; return saveBoardDrive(tab.id, local); }
+  tab.modifiedTime = meta.modifiedTime; writeBoardLocal(tab.id, data); saveTabsLocal();
+  if (isActive()) { loadState(data); retryImages(); }
+}
+const emptyBoard = () => ({ app: 'quadrado-magico', version: 2, savedAt: new Date(0).toISOString(), viewport: { x: 0, y: 0, zoom: 1 }, elements: [] });
+async function saveIndex() {
+  await ensureRoot();
+  const data = { app: 'quadrado-magico', kind: 'indice', version: 2, updatedAt: tabsState.indexUpdatedAt || new Date().toISOString(),
+    tabs: tabsState.tabs.map(t => ({ id: t.id, name: t.name, folderId: t.folderId || null })), trash: tabsState.trash };
+  if (!indexFileId) indexFileId = await findOrCreate(INDEX_NAME, folderId);
+  if (indexFileId) await updateJsonFile(indexFileId, JSON.stringify(data));
+  else indexFileId = (await createJsonFile(INDEX_NAME, folderId, JSON.stringify(data))).id || null;
+}
+function touchIndex() { tabsState.indexUpdatedAt = new Date().toISOString(); saveTabsLocal(); renderTabs(); updateTrashBadge(); enqueue(saveIndex); }
+// Ao abrir: lê do Drive a lista de pastas das abas (funciona entre iPad e Mac)
+async function syncFromDrive() {
+  setStatus('saving', 'Carregando…');
+  await ensureRoot(); await ensureTrashFolder();
+  const kids = await listChildren(folderId);
+  const remoteTabs = kids.filter(f => f.mimeType === FOLDER_MIME && f.appProperties && f.appProperties.qmTab);
+  const idxFile = kids.find(f => f.name === INDEX_NAME && f.mimeType !== FOLDER_MIME);
+  let index = null;
+  if (idxFile) { indexFileId = idxFile.id; try { const d = await readJson(idxFile.id); if (d && Array.isArray(d.tabs)) index = d; } catch (e) { console.warn(e); } }
+  if (!remoteTabs.length) {
+    // Primeira vez com abas: migra o quadro antigo (quadrado-magico.json na pasta principal) para a aba "Quadro 1"
+    const legacy = kids.find(f => f.name === FILE_NAME && f.mimeType !== FOLDER_MIME);
+    for (const t of tabsState.tabs) { t.folderId = null; t.fileId = null; t.modifiedTime = null; }
+    const target = tabsState.tabs.find(t => t.legacy) || tabsState.tabs[0];
+    if (legacy) {
+      let data = null; try { data = await readJson(legacy.id); } catch (e) { console.warn(e); }
+      const isAct = target.id === tabsState.activeId, local = isAct ? serialize() : readBoardLocal(target.id);
+      if (data && Array.isArray(data.elements) && (!local || !local.elements.length || !local.savedAt || (data.savedAt || '') >= local.savedAt)) {
+        writeBoardLocal(target.id, data); if (isAct) loadState(data);
+      }
+      await ensureTabFolder(target);
+      try { await moveFile(legacy.id, target.folderId, folderId); target.fileId = legacy.id; } catch (e) { console.warn('não moveu o JSON antigo', e); }
+      const png = kids.find(f => f.name === PNG_NAME && f.mimeType !== FOLDER_MIME);
+      if (png) { try { await moveFile(png.id, target.folderId, folderId); target.pngFileId = png.id; } catch (e) { console.warn(e); } }
+      const board = target.id === tabsState.activeId ? serialize() : readBoardLocal(target.id);
+      for (const el of (board ? board.elements : []).filter(e => e.type === 'file' && e.fileId)) {
+        try { await moveFile(el.fileId, target.folderId); } catch (e) { console.warn('arquivo não movido (sem permissão do app?)', el.name, e); }
+      }
+    }
+    for (const t of tabsState.tabs) await ensureTabFolder(t);
+  } else {
+    const order = index ? index.tabs.map(t => t.id) : [];
+    remoteTabs.sort((a, b) => { const ia = order.indexOf(a.appProperties.qmTab), ib = order.indexOf(b.appProperties.qmTab); return (ia < 0 ? 1e9 : ia) - (ib < 0 ? 1e9 : ib) || a.name.localeCompare(b.name); });
+    const merged = [];
+    for (const f of remoteTabs) {
+      const id = f.appProperties.qmTab, loc = tabById(id);
+      merged.push(loc ? Object.assign(loc, { name: f.name, folderId: f.id }) : { id, name: f.name, folderId: f.id });
+    }
+    for (const t of tabsState.tabs) if (!merged.includes(t) && !t.folderId && !t.legacy) { await ensureTabFolder(t); merged.push(t); } // criadas sem internet
+    const oldActive = tabsState.activeId;
+    tabsState.tabs = merged;
+    if (index && (index.updatedAt || '') > (tabsState.indexUpdatedAt || '')) { tabsState.trash = Array.isArray(index.trash) ? index.trash : []; tabsState.indexUpdatedAt = index.updatedAt; }
+    if (!tabById(tabsState.activeId)) tabsState.activeId = merged[0].id;
+    if (tabsState.activeId !== oldActive) loadState(readBoardLocal(tabsState.activeId) || emptyBoard());
+  }
+  saveTabsLocal(); renderTabs(); updateTrashBadge();
+  await loadTabFromDrive(activeTab());
+  await saveIndex();
+  dirty = false;
+  setStatus('saved', 'Salvo ' + hhmm());
 }
 async function saveNow() {
   clearTimeout(saveTimer);
   saveLocal();
-  if (!accessToken && !tokenExpiry) { setStatus('off', 'Não conectado (backup local)'); return; }
-  if (saving) { saveAgain = true; return; }
-  saving = true; setStatus('saving', 'Salvando…');
-  try {
-    if (!folderId) folderId = await findOrCreateFolder();
-    const json = JSON.stringify(serialize());
-    if (!fileId) fileId = await findFile();
-    if (!fileId) fileId = await createFile(json);
-    else await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: json
-    });
-    dirty = false;
-    try { await uploadBoardPng(); } catch (e) { console.error('PNG', e); }
-    setStatus('saved', 'Salvo ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
-  } catch (err) {
-    console.error(err); setStatus('error', 'Erro ao salvar');
-  } finally {
-    saving = false;
-    if (saveAgain) { saveAgain = false; saveNow(); }
-  }
-}
-async function loadFromDrive() {
-  setStatus('saving', 'Carregando…');
-  try {
-    folderId = await findOrCreateFolder();
-    fileId = await findFile();
-    if (fileId) {
-      const data = await (await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`)).json();
-      const local = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
-      // Se o backup local for mais recente que o Drive (ex.: editou offline), mantém o local e envia.
-      if (local && local.savedAt && data.savedAt && local.savedAt > data.savedAt && local.elements.length) { loadState(local); await saveNow(); }
-      else { loadState(data); saveLocal(); setStatus('saved', 'Salvo'); }
-    } else { await saveNow(); }
-  } catch (err) { console.error(err); setStatus('error', 'Erro ao carregar'); }
+  if (!connected()) { setStatus('off', 'Salvo neste aparelho (sem Google)'); return; }
+  const tab = activeTab(), data = serialize();
+  setStatus('saving', 'Salvando…');
+  return enqueue(async () => { await saveBoardDrive(tab.id, data); if (tab.id === tabsState.activeId) dirty = false; setStatus('saved', 'Salvo ' + hhmm()); });
 }
 function showConnected(on) {
-  $('loginBtn').classList.toggle('hidden', on); $('logoutBtn').classList.toggle('hidden', !on); $('saveBtn').disabled = !on;
+  $('loginBtn').classList.toggle('hidden', on); $('logoutBtn').classList.toggle('hidden', !on);
 }
 async function fetchEmail() {
   if (userEmail) return;
@@ -601,7 +733,7 @@ async function fetchEmail() {
 }
 async function afterConnect() {
   showConnected(true);
-  await loadFromDrive();
+  try { await enqueue(syncFromDrive); } catch (e) { console.error(e); setStatus('error', 'Erro ao carregar'); }
   retryImages(); render();
   uploadInlineFiles();
   fetchEmail();
@@ -634,9 +766,9 @@ async function autoLogin() {
 }
 function logout() {
   if (accessToken && window.google && google.accounts) google.accounts.oauth2.revoke(accessToken, () => {});
-  accessToken = null; tokenExpiry = 0; folderId = fileId = null; filesFolderId = pngFileId = null; lastPngKey = ''; userEmail = '';
+  accessToken = null; tokenExpiry = 0; folderId = fileId = null; trashFolderId = indexFileId = null; lastPngKey = ''; userEmail = '';
   localStorage.removeItem('quadrado-magico-logged'); localStorage.removeItem(TOKEN_KEY);
-  $('loginBtn').classList.remove('hidden'); $('logoutBtn').classList.add('hidden'); $('saveBtn').disabled = true;
+  $('loginBtn').classList.remove('hidden'); $('logoutBtn').classList.add('hidden');
   setStatus('off', 'Não conectado');
 }
 $('loginBtn').onclick = login; $('logoutBtn').onclick = logout; $('saveBtn').onclick = saveNow;
@@ -644,9 +776,8 @@ window.addEventListener('beforeunload', e => { saveLocal(); if (dirty && accessT
 
 // ===== Arquivos (qualquer tipo) e imagens no quadro =====
 const PNG_NAME = 'quadrado-magico.png';
-const FILES_FOLDER = 'Arquivos';
 const imgCache = new Map(); // fileId -> { img, status }
-let filesFolderId = null, pngFileId = null, lastPngKey = '';
+let lastPngKey = '';
 
 function fmtSize(n) {
   n = +n || 0; if (n < 1024) return n + ' B';
@@ -768,7 +899,7 @@ async function uploadInlineFiles() {
   try {
     for (const el of elements.filter(e => e.type === 'file' && e.dataUrl && !e.fileId)) {
       try {
-        const parent = await ensureFilesFolder();
+        const parent = await enqueue(() => ensureTabFolder(activeTab())); if (!parent) continue;
         const blob = dataUrlToFile(el.dataUrl), res = await resumableUpload(blob, parent, () => {});
         QMViewer.cache.set(res.id, blob); el.fileId = res.id; el.webViewLink = res.webViewLink || null; el.mimeType = res.mimeType || el.mimeType; delete el.dataUrl;
         changed();
@@ -777,24 +908,6 @@ async function uploadInlineFiles() {
   } finally { inlineUploading = false; }
 }
 
-async function findOrCreate(name, parent, mime) {
-  const query = `name='${name.replace(/'/g, "\\'")}' and '${parent}' in parents and trashed=false` + (mime ? ` and mimeType='${mime}'` : '');
-  const r = await (await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q(query)}&fields=files(id)`)).json();
-  return r.files && r.files.length ? r.files[0].id : null;
-}
-async function ensureFilesFolder() {
-  if (!folderId) folderId = await findOrCreateFolder();
-  if (filesFolderId) return filesFolderId;
-  filesFolderId = await findOrCreate(FILES_FOLDER, folderId, 'application/vnd.google-apps.folder');
-  if (!filesFolderId) {
-    const c = await (await driveFetch('https://www.googleapis.com/drive/v3/files?fields=id', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: FILES_FOLDER, mimeType: 'application/vnd.google-apps.folder', parents: [folderId] })
-    })).json();
-    filesFolderId = c.id;
-  }
-  return filesFolderId;
-}
 // Upload resumível (serve para arquivos grandes) com progresso via XHR.
 async function resumableUpload(file, parent, onProgress, retry = true) {
   const token = await getToken();
@@ -831,7 +944,7 @@ async function uploadFiles(files, screenPt) {
   files = [...files]; if (!files.length) return;
   if (!accessToken && !tokenExpiry) { setStatus('error', 'Entre com Google para enviar arquivos'); return; }
   const center = screenPt ? toWorld(screenPt.x, screenPt.y) : toWorld(innerWidth / 2, innerHeight / 2);
-  let offset = 0;
+  let offset = 0; const upTab = activeTab();
   for (const file of files) {
     const isImage = /^image\/(png|jpe?g|gif|webp|bmp|svg\+xml|avif)$/.test(file.type);
     let { w, h } = defaultCardSize(file.type, file.name), info = null;
@@ -849,7 +962,8 @@ async function uploadFiles(files, screenPt) {
     pushHistory(); elements.push(el); render();
     uploadsActive++;
     try {
-      const parent = await ensureFilesFolder();
+      const parent = await enqueue(() => ensureTabFolder(upTab));
+      if (!parent) throw new Error('Pasta da aba indisponível');
       const res = await resumableUpload(file, parent, p => setStatus('saving', `Enviando ${el.name} ${Math.round(p * 100)}%`));
       QMViewer.cache.set(res.id, file); el.fileId = res.id; el.webViewLink = res.webViewLink || null; el.mimeType = res.mimeType || el.mimeType; el.size = +res.size || el.size;
       if (el.isImage && info) imgCache.set(res.id, { img: info.img, status: 'ok' });
@@ -888,24 +1002,24 @@ async function renderBoardPng() {
   try { for (const el of list) drawEl(el); } finally { ctx = saved; }
   return new Promise(res => off.toBlob(res, 'image/png'));
 }
-async function uploadBoardPng() {
+async function uploadBoardPng(tab) {
   const pendingImgs = elements.some(e => e.type === 'file' && e.isImage && !(imgCache.get(e.fileId) || {}).img);
-  const key = JSON.stringify(elements);
+  const key = tab.id + JSON.stringify(elements);
   if (key === lastPngKey && !pendingImgs) return;
   const blob = await renderBoardPng();
   if (!blob) return;
-  if (!folderId) folderId = await findOrCreateFolder();
-  if (!pngFileId) pngFileId = await findOrCreate(PNG_NAME, folderId);
-  if (!pngFileId) {
+  await ensureTabFolder(tab);
+  if (!tab.pngFileId) tab.pngFileId = await findOrCreate(PNG_NAME, tab.folderId);
+  if (!tab.pngFileId) {
     const boundary = 'qmpng' + Date.now();
-    const meta = JSON.stringify({ name: PNG_NAME, mimeType: 'image/png', parents: [folderId] });
+    const meta = JSON.stringify({ name: PNG_NAME, mimeType: 'image/png', parents: [tab.folderId] });
     const body = new Blob([`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: image/png\r\n\r\n`, blob, `\r\n--${boundary}--`]);
-    const r = await (await driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+    const r = await driveJson('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
       method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + boundary }, body
-    })).json();
-    pngFileId = r.id;
+    });
+    tab.pngFileId = r.id || null; saveTabsLocal();
   } else {
-    await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${pngFileId}?uploadType=media`, {
+    await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${tab.pngFileId}?uploadType=media`, {
       method: 'PATCH', headers: { 'Content-Type': 'image/png' }, body: blob
     });
   }
@@ -934,10 +1048,211 @@ window.addEventListener('paste', e => {
 
 // ===== Início =====
 window.addEventListener('resize', resize);
-try { loadState(JSON.parse(localStorage.getItem(LS_KEY) || 'null')); } catch (e) {}
+// ===== Diálogos (confirmação / nome) =====
+const dlg = $('qmDialog');
+let dlgResolve = null;
+function qmDialog({ title = '', message = '', input = false, value = '', okText = 'OK', danger = false }) {
+  if (dlgResolve) dlgResolve(null);
+  dlg.querySelector('.dlg-title').textContent = title;
+  dlg.querySelector('.dlg-msg').textContent = message; dlg.querySelector('.dlg-msg').classList.toggle('hidden', !message);
+  const inp = dlg.querySelector('.dlg-input'); inp.classList.toggle('hidden', !input); inp.value = value;
+  const ok = dlg.querySelector('.dlg-ok'); ok.textContent = okText; ok.classList.toggle('danger', danger);
+  dlg.classList.remove('hidden');
+  setTimeout(() => { if (input) { inp.focus(); inp.select(); } else ok.focus(); }, 30);
+  return new Promise(res => { dlgResolve = v => { dlgResolve = null; dlg.classList.add('hidden'); res(v); }; });
+}
+const dialogOpen = () => !dlg.classList.contains('hidden');
+function dlgOk() { if (!dlgResolve) return; const inp = dlg.querySelector('.dlg-input'); dlgResolve(inp.classList.contains('hidden') ? true : inp.value.trim() || null); }
+dlg.querySelector('.dlg-ok').onclick = dlgOk;
+dlg.querySelector('.dlg-cancel').onclick = () => dlgResolve && dlgResolve(null);
+dlg.addEventListener('pointerdown', e => { if (e.target === dlg && dlgResolve) dlgResolve(null); });
+window.addEventListener('keydown', e => { if (!dialogOpen()) return; e.stopPropagation(); if (e.key === 'Escape') dlgResolve && dlgResolve(null); if (e.key === 'Enter') { e.preventDefault(); dlgOk(); } }, true);
+const confirmDelete = (name, extra) => qmDialog({ title: `Deseja excluir "${name}"?`, message: extra || 'Ele irá para a Lixeira, de onde pode ser restaurado.', okText: 'Excluir', danger: true });
+
+// ===== Abas =====
+function renderTabs() {
+  const list = $('tabList'); list.innerHTML = '';
+  for (const t of tabsState.tabs) {
+    const d = document.createElement('div'); d.className = 'tab' + (t.id === tabsState.activeId ? ' active' : ''); d.dataset.id = t.id; d.title = t.name + ' — duplo clique para renomear';
+    d.innerHTML = '<span class="tab-name"></span><button class="tab-menu" title="Opções da aba">⋮</button>';
+    d.querySelector('.tab-name').textContent = t.name;
+    d.addEventListener('click', e => { if (!e.target.closest('.tab-menu')) switchTab(t.id); });
+    d.addEventListener('dblclick', e => { e.preventDefault(); renameTab(t.id); });
+    d.addEventListener('contextmenu', e => { e.preventDefault(); openTabMenu(t.id, d); });
+    d.querySelector('.tab-menu').addEventListener('click', e => { e.stopPropagation(); openTabMenu(t.id, d); });
+    let lp = null; // toque longo (iPad) abre o menu
+    d.addEventListener('pointerdown', e => { if (e.pointerType !== 'mouse') lp = setTimeout(() => { lp = 'done'; openTabMenu(t.id, d); }, 550); });
+    const cancel = () => { if (lp && lp !== 'done') clearTimeout(lp); lp = null; };
+    d.addEventListener('pointerup', cancel); d.addEventListener('pointercancel', cancel); d.addEventListener('pointerleave', cancel);
+    list.appendChild(d);
+  }
+  const a = list.querySelector('.tab.active'); if (a && a.scrollIntoView) a.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+let menuTab = null;
+function openTabMenu(id, anchor) {
+  menuTab = id; const m = $('tabMenu'), r = anchor.getBoundingClientRect();
+  m.classList.remove('hidden'); m.style.left = Math.min(r.left, innerWidth - 180) + 'px'; m.style.top = (r.bottom + 4) + 'px';
+}
+const closeTabMenu = () => $('tabMenu').classList.add('hidden');
+document.addEventListener('pointerdown', e => { if (!$('tabMenu').contains(e.target) && !e.target.closest('.tab-menu')) closeTabMenu(); }, true);
+$('tabMenu').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return; closeTabMenu();
+  const id = menuTab;
+  if (b.dataset.act === 'rename') renameTab(id);
+  if (b.dataset.act === 'save') { if (id !== tabsState.activeId) switchTab(id); saveNow(); }
+  if (b.dataset.act === 'delete') deleteTab(id);
+});
+function switchTab(id) {
+  if (id === tabsState.activeId || !tabById(id)) return;
+  if (uploadsActive) { setStatus('saving', 'Aguarde o envio do arquivo terminar'); return; }
+  commitText();
+  const prev = tabById(tabsState.activeId);
+  if (prev) { saveLocal(); if (dirty && connected()) { const data = serialize(); enqueue(() => saveBoardDrive(prev.id, data)); } }
+  clearTimeout(saveTimer); dirty = false;
+  tabsState.activeId = id; saveTabsLocal();
+  loadState(readBoardLocal(id) || emptyBoard());
+  renderTabs();
+  if (connected()) enqueue(() => loadTabFromDrive(tabById(id) || activeTab()));
+}
+function uniqueName(base) { let n = base, i = 2; const names = tabsState.tabs.map(t => t.name.toLowerCase()); while (names.includes(n.toLowerCase())) n = base + ' (' + i++ + ')'; return n; }
+async function newTab() {
+  let n = tabsState.tabs.length + 1; while (tabsState.tabs.some(t => t.name === 'Quadro ' + n)) n++;
+  const name = await qmDialog({ title: 'Nova aba', message: 'Nome do documento:', input: true, value: 'Quadro ' + n, okText: 'Criar' });
+  if (!name) return null;
+  const t = { id: uid(), name: uniqueName(name.slice(0, 80)) };
+  tabsState.tabs.push(t); writeBoardLocal(t.id, { ...emptyBoard(), savedAt: new Date().toISOString() });
+  switchTab(t.id);
+  if (connected()) enqueue(async () => { await ensureTabFolder(t); });
+  touchIndex(); return t;
+}
+async function renameTab(id) {
+  const t = tabById(id); if (!t) return;
+  const name = await qmDialog({ title: 'Renomear aba', message: 'Novo nome:', input: true, value: t.name, okText: 'Renomear' });
+  if (!name || name === t.name) return;
+  t.name = name.slice(0, 80); saveTabsLocal(); renderTabs();
+  if (connected()) enqueue(async () => { if (t.folderId) await renameDrive(t.folderId, t.name); else await ensureTabFolder(t); });
+  touchIndex();
+}
+async function deleteTab(id) {
+  const t = tabById(id); if (!t) return;
+  if (!await confirmDelete(t.name, 'A aba e todos os arquivos dela irão para a Lixeira.')) return;
+  if (id === tabsState.activeId) { commitText(); saveLocal(); if (dirty && connected()) { const data = serialize(); enqueue(() => saveBoardDrive(t.id, data)); } dirty = false; }
+  const idx = tabsState.tabs.indexOf(t);
+  tabsState.tabs.splice(idx, 1);
+  tabsState.trash.unshift({ id: uid(), kind: 'tab', name: t.name, deletedAt: new Date().toISOString(), tab: t });
+  if (!tabsState.tabs.length) { const n = { id: uid(), name: uniqueName('Quadro 1') }; tabsState.tabs.push(n); writeBoardLocal(n.id, emptyBoard()); if (connected()) enqueue(() => ensureTabFolder(n)); }
+  if (id === tabsState.activeId) { tabsState.activeId = null; switchTab(tabsState.tabs[Math.min(idx, tabsState.tabs.length - 1)].id); }
+  if (connected() && t.folderId) enqueue(async () => { await moveFile(t.folderId, await ensureTrashFolder(), folderId); });
+  touchIndex(); setStatus('saved', `"${t.name}" foi para a Lixeira`);
+}
+$('addTab').onclick = () => newTab();
+
+// ===== Excluir elementos / cartões (com confirmação) =====
+const TYPE_NAMES = { pen: 'desenho', rect: 'retângulo', ellipse: 'elipse', line: 'linha', arrow: 'seta', text: 'texto', file: 'arquivo' };
+function elName(e) { if (e.type === 'file') return e.name; if (e.type === 'text') return e.text.length > 30 ? e.text.slice(0, 30) + '…' : e.text; return TYPE_NAMES[e.type] || 'elemento'; }
+function trashFileEls(els) {
+  const tab = activeTab();
+  for (const el of els.filter(e => e.type === 'file' && !e.uploading)) {
+    const copy = { ...el }; delete copy._hidden;
+    tabsState.trash.unshift({ id: uid(), kind: 'file', name: el.name, deletedAt: new Date().toISOString(), fromTabId: tab.id, fromTabName: tab.name, el: copy });
+    if (el.fileId && connected()) enqueue(async () => { await moveFile(el.fileId, await ensureTrashFolder()); });
+  }
+}
+async function deleteSelected() {
+  const sel = selectedEls(); if (!sel.length) return;
+  const files = sel.filter(e => e.type === 'file');
+  const name = sel.length === 1 ? elName(sel[0]) : sel.length + ' itens';
+  if (!await confirmDelete(name, files.length ? 'Arquivos vão para a Lixeira (podem ser restaurados).' : 'Você pode desfazer com ↶.')) return;
+  pushHistory();
+  const ids = new Set(sel.map(e => e.id));
+  elements = elements.filter(e => !ids.has(e.id)); selectedId = null; multiSel = [];
+  if (files.length) { trashFileEls(files); touchIndex(); }
+  changed(); if (files.length) saveNow().catch(console.error);
+}
+async function clearBoard() {
+  if (!elements.length) { setStatus('off', 'O quadro já está vazio'); return; }
+  const t = activeTab();
+  if (!await confirmDelete('tudo do quadro ' + t.name, 'Todos os desenhos serão apagados (pode desfazer com ↶) e os arquivos irão para a Lixeira.')) return;
+  pushHistory(); const files = elements.filter(e => e.type === 'file');
+  elements = []; selectedId = null; multiSel = [];
+  if (files.length) { trashFileEls(files); touchIndex(); }
+  changed(); if (files.length) saveNow().catch(console.error);
+}
+// Ao desfazer uma exclusão de cartão, ele sai da Lixeira e volta para a pasta da aba
+function reconcileTrash() {
+  const ids = new Set(elements.filter(e => e.type === 'file').map(e => e.id)); const tab = activeTab();
+  const back = tabsState.trash.filter(x => x.kind === 'file' && ids.has(x.el.id));
+  if (!back.length) return;
+  tabsState.trash = tabsState.trash.filter(x => !back.includes(x));
+  for (const x of back) if (x.el.fileId && connected()) enqueue(async () => { await moveFile(x.el.fileId, await ensureTabFolder(tab)); });
+  touchIndex();
+}
+
+// ===== Lixeira =====
+function updateTrashBadge() { const n = tabsState.trash.length, b = $('trashBadge'); b.textContent = n; b.classList.toggle('hidden', !n); }
+const fmtDate = s => { try { return new Date(s).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch (e) { return s; } };
+function renderTrash() {
+  const list = $('trashList'); list.innerHTML = '';
+  $('emptyTrash').disabled = !tabsState.trash.length;
+  if (!tabsState.trash.length) { list.innerHTML = '<div class="tv-empty">A lixeira está vazia.</div>'; return; }
+  for (const x of tabsState.trash) {
+    const r = document.createElement('div'); r.className = 'tv-item'; r.dataset.id = x.id;
+    r.innerHTML = '<span class="tv-ico"></span><div class="tv-info"><div class="tv-name"></div><div class="tv-sub"></div></div><button class="tv-restore">Restaurar</button><button class="tv-del">Excluir definitivamente</button>';
+    r.querySelector('.tv-ico').textContent = x.kind === 'tab' ? '🗂️' : fileIcon(x.el.mimeType || '', x.el.name || '');
+    r.querySelector('.tv-name').textContent = x.name;
+    r.querySelector('.tv-sub').textContent = (x.kind === 'tab' ? 'Aba' : 'Arquivo da aba "' + (x.fromTabName || '?') + '"') + ' · excluído em ' + fmtDate(x.deletedAt);
+    r.querySelector('.tv-restore').onclick = () => restoreItem(x.id);
+    r.querySelector('.tv-del').onclick = () => purgeItem(x.id);
+    list.appendChild(r);
+  }
+}
+function openTrash() { renderTrash(); $('trashView').classList.remove('hidden'); }
+const closeTrash = () => $('trashView').classList.add('hidden');
+const trashOpen = () => !$('trashView').classList.contains('hidden');
+function restoreItem(id) {
+  const x = tabsState.trash.find(i => i.id === id); if (!x) return;
+  tabsState.trash = tabsState.trash.filter(i => i !== x);
+  if (x.kind === 'tab') {
+    const t = x.tab; t.name = uniqueName(t.name); tabsState.tabs.push(t);
+    if (connected()) enqueue(async () => {
+      if (t.folderId) { await moveFile(t.folderId, await ensureRoot(), await ensureTrashFolder()); if (t.name !== x.name) await renameDrive(t.folderId, t.name); }
+      else await ensureTabFolder(t);
+    });
+  } else {
+    const tab = tabById(x.fromTabId) || activeTab(), el = { ...x.el };
+    if (tab.id === tabsState.activeId) { pushHistory(); elements.push(el); changed(); }
+    else { const b = readBoardLocal(tab.id) || emptyBoard(); b.elements.push(el); b.savedAt = new Date().toISOString(); writeBoardLocal(tab.id, b); if (connected()) enqueue(() => saveBoardDrive(tab.id, b)); }
+    if (el.fileId && connected()) enqueue(async () => { await moveFile(el.fileId, await ensureTabFolder(tab)); });
+    setStatus('saved', `"${x.name}" restaurado em "${tab.name}"`);
+  }
+  touchIndex(); renderTrash();
+}
+function purgeEntry(x) {
+  tabsState.trash = tabsState.trash.filter(i => i !== x);
+  if (x.kind === 'tab') { try { localStorage.removeItem(BOARD_PREFIX + x.tab.id); } catch (e) {} }
+  const did = x.kind === 'tab' ? x.tab.folderId : x.el.fileId;
+  if (did && connected()) enqueue(async () => { try { await trashDrive(did); } catch (e) { console.warn('não excluiu no Drive', e); } });
+}
+async function purgeItem(id) {
+  const x = tabsState.trash.find(i => i.id === id); if (!x) return;
+  if (!await qmDialog({ title: `Deseja excluir "${x.name}"?`, message: 'Excluir definitivamente. Não será possível restaurar.', okText: 'Excluir', danger: true })) return;
+  purgeEntry(x); touchIndex(); renderTrash();
+}
+async function emptyTrash() {
+  const n = tabsState.trash.length; if (!n) return;
+  if (!await qmDialog({ title: 'Esvaziar lixeira?', message: `${n} ${n === 1 ? 'item será excluído' : 'itens serão excluídos'} definitivamente. Não será possível restaurar.`, okText: 'Esvaziar', danger: true })) return;
+  for (const x of [...tabsState.trash]) purgeEntry(x);
+  touchIndex(); renderTrash();
+}
+$('trashBtn').onclick = openTrash; $('trashClose').onclick = closeTrash; $('emptyTrash').onclick = emptyTrash;
+$('trashView').addEventListener('pointerdown', e => { if (e.target.id === 'trashView') closeTrash(); });
+window.addEventListener('keydown', e => { if (e.key === 'Escape' && trashOpen() && !dialogOpen()) closeTrash(); });
+
+loadTabsLocal(); renderTabs(); updateTrashBadge();
+try { loadState(readBoardLocal(tabsState.activeId) || emptyBoard()); } catch (e) { console.error(e); }
 QMInline.init({ open: openFileEl, select: el => { if (tool !== 'select') return; commitText(); selectedId = el.id; multiSel = []; render(); }, wheel: onWheel,
   hasToken, getToken: getTokenNoPopup, refresh: refreshToken, login, rerender: render, zoom: () => view.zoom });
 setTool('select'); resize(); initGis(); autoLogin();
 if (location.protocol === 'file:') setStatus('error', 'Abra via http://localhost:8000');
 // Exposto para testes automatizados
-window.__quadrado = { openFileEl, migrateDataUrlTexts, loadState, get elements() { return elements; }, get view() { return view; }, undo, redo, saveNow, setTool, render, QMInline, setToken: (t) => { accessToken = t; tokenExpiry = Date.now() + 3600e3; render(); } };
+window.__quadrado = { get tabsState() { return tabsState; }, switchTab, newTab, deleteTab, syncFromDrive, get driveQ() { return driveQ; }, openFileEl, migrateDataUrlTexts, loadState, get elements() { return elements; }, get view() { return view; }, undo, redo, saveNow, setTool, render, QMInline, setToken: (t) => { accessToken = t; tokenExpiry = Date.now() + 3600e3; render(); } };

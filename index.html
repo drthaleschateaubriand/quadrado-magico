@@ -5,7 +5,7 @@
 <meta http-equiv="Cache-Control" content="no-cache">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Quadrado Mágico</title>
-<link rel="stylesheet" href="styles.css?v=202611011530">
+<link rel="stylesheet" href="styles.css?v=202611011600">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -26,7 +26,8 @@
   <button id="openBtn" class="hidden" title="Abrir arquivo aqui no app">📂</button>
   <button id="undoBtn" title="Desfazer (Ctrl+Z)">↶</button>
   <button id="redoBtn" title="Refazer (Ctrl+Shift+Z)">↷</button>
-  <button id="deleteBtn" title="Excluir seleção (Del)">🗑️</button>
+  <button id="deleteBtn" title="Excluir seleção (Del) — sem seleção: limpar o quadro">🗑️</button>
+  <button id="trashBtn" title="Lixeira">🗃️<span id="trashBadge" class="hidden">0</span></button>
   <button id="optsBtn" title="Opções" aria-expanded="false">▾</button>
   <div id="stylebar" class="hidden">
     <label>Traço <input type="color" id="strokeColor" value="#1e1e1e"></label>
@@ -35,17 +36,28 @@
   </div>
 </div>
 
+<div id="tabbar"><div id="tabList"></div><button id="addTab" title="Nova aba">+</button></div>
+<div id="tabMenu" class="hidden"><button data-act="rename">✏️ Renomear</button><button data-act="save">💾 Salvar</button><button data-act="delete" class="danger">🗑️ Excluir</button></div>
+<div id="trashView" class="hidden"><div class="tv-box">
+  <div class="tv-head"><span class="tv-title">🗃️ Lixeira</span><button id="trashClose" title="Fechar">✕</button></div>
+  <div id="trashList"></div>
+  <div class="tv-foot"><button id="emptyTrash" class="danger">Esvaziar lixeira</button></div>
+</div></div>
+<div id="qmDialog" class="hidden" role="dialog" aria-modal="true"><div class="dlg-box">
+  <div class="dlg-title"></div><div class="dlg-msg"></div><input class="dlg-input hidden" type="text" maxlength="80">
+  <div class="dlg-btns"><button class="dlg-cancel">Cancelar</button><button class="dlg-ok">OK</button></div>
+</div></div>
 <div id="zoombar" class="panel">
   <button id="zoomOut">−</button><span id="zoomLabel">100%</span><button id="zoomIn">+</button><button id="zoomReset" title="Redefinir">⟲</button>
 </div>
 <div id="syncbar" class="panel">
   <span id="status" class="st-off">Não conectado</span>
   <button id="loginBtn">Entrar com Google</button>
-  <button id="saveBtn" disabled>Salvar agora</button>
+  <button id="saveBtn" title="Salvar (Ctrl+S)">💾 Salvar</button>
   <button id="logoutBtn" class="hidden">Sair</button>
 </div>
-<script src="viewer.js?v=202611011530"></script>
-<script src="inline.js?v=202611011530"></script>
-<script src="app.js?v=202611011530"></script>
+<script src="viewer.js?v=202611011600"></script>
+<script src="inline.js?v=202611011600"></script>
+<script src="app.js?v=202611011600"></script>
 </body>
 </html>
